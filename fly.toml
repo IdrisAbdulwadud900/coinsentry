@@ -1,0 +1,28 @@
+# Fly.io app configuration for CoinSentry.
+#
+# `app` must be a globally-unique name across all of Fly.io — change it before
+# deploying (or just run `fly launch` and let it pick/prompt for one, which
+# will overwrite this file).
+app = "coinsentry-bot"
+primary_region = "iad"
+
+[build]
+
+[env]
+  DB_PATH = "/app/data/coinsentry.db"
+  POLL_INTERVAL_SECONDS = "20"
+  LOG_LEVEL = "info"
+
+# Persistent volume for the SQLite database, so data survives deploys/restarts.
+# Create it once with: fly volumes create coinsentry_data --size 1 --region iad
+[[mounts]]
+  source = "coinsentry_data"
+  destination = "/app/data"
+
+# This is a long-lived polling process (Telegram long-polling + a background
+# poller loop), not a request-driven web server, so it must never be scaled
+# to zero or run as multiple concurrent machines (that would double-poll
+# Telegram and DexScreener, and corrupt the SQLite file).
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
