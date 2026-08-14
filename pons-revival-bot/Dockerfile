@@ -20,8 +20,7 @@ EXPOSE 8787
 # heap toward it and the kernel OOM-killed the process at 855MB RSS ("Out of memory: Killed
 # process ... anon-rss:855692kB"), which is a harder failure than the V8 heap limit it was
 # meant to fix. 512 heap + ~150MB of non-heap runtime leaves real headroom under the cap.
-# The dump is taken from inside the scan loop (see maybeDumpHeap in poller.ts) rather than
-# via --heapsnapshot-near-heap-limit: at the heap limit V8 no longer has the memory to
-# serialise a snapshot, and every file it produced was 0 bytes.
-WORKDIR /data
+# cwd stays /app. It was briefly /data for a heap-dump experiment, which is a trap: any
+# relative-path write would land on the data volume, and a full volume is what took this
+# bot down for 31 hours. The dump path in maybeDumpHeap is absolute, so it needs no help.
 CMD ["node", "--max-old-space-size=512", "/app/dist/index.js"]

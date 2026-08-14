@@ -25,12 +25,21 @@ primary_region = "iad"
   # Deliver only the highest-conviction profile: Robinhood coins alerted within 5 minutes
   # of launch, measured at 86% win / 3% dump for tier alerts and 73% for momentum, vs
   # 31-44% for everything older. Set to "low" to restore full coverage.
-  MIN_ALERT_CONVICTION = "high"
+  # "high" is unreachable under the >=60-minute rule: rateConviction only awards it to a
+  # brand-new pair or to a breakout, so a high floor silently discarded every momentum
+  # alert on an established coin — 129 were blocked as "medium conviction" in two hours,
+  # which is exactly the sudden-bid signal this bot now exists to send. "medium" lets that
+  # signal through while still dropping the low-confidence bucket.
+  MIN_ALERT_CONVICTION = "medium"
   # Breakout: catches a coin surging against its own baseline at any age — the 2k->high
   # move that happens hours or days after launch, which every launch-anchored path misses.
-  BREAKOUT_VOLUME_MULTIPLE = "5"
-  BREAKOUT_MIN_VOLUME_1H_USD = "3000"
-  BREAKOUT_MIN_BUYS_1H = "30"
+  # Loosened against measured supply, not by feel: of 1,808 coins scanned in an hour only
+  # 64 had a single buy, and just 9-10 cleared the old floors — before the 5x surge test
+  # was even applied. At that rate the signal fires a few times a day at best and misses
+  # the smaller surges the strategy is meant to catch.
+  BREAKOUT_VOLUME_MULTIPLE = "3"
+  BREAKOUT_MIN_VOLUME_1H_USD = "1500"
+  BREAKOUT_MIN_BUYS_1H = "15"
   BREAKOUT_COOLDOWN_HOURS = "12"
   EARLY_MOMENTUM_MAX_AGE_MINUTES = "10080"
   EARLY_MOMENTUM_MIN_BUYS_5M = "10"
