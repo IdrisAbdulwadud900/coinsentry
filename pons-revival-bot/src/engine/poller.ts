@@ -1259,13 +1259,26 @@ async function handleBreakoutCandidate(
   now: number
 ): Promise<void> {
   const { tokenRepo, snapshotRepo, notifier, telegramChatId, dryRunAlerts, logger } = deps;
-  if (token.status !== "active") return;
+  // A coin resting on its floor is classified 'dead', not 'active' — which is exactly the
+  // coin worth catching as it turns back up. Restricting this handler to 'active' meant the
+  // reversal signal could never see its own target. Dead coins are evaluated for reversal
+  // only: a *volume* surge on a dead coin is already the revival signal's job.
+  const isDeadCandidate = token.status === "dead";
+  if (token.status !== "active" && !isDeadCandidate) return;
   if (isInCooldown(token.breakout_alerted_at, now, deps.breakoutCooldownHours)) return;
+  // Respect the shared alert cooldown too, so a coin that just fired a revival alert does
+  // not immediately fire a near-identical reversal alert on the same move.
+  if (isInCooldown(token.last_alert_at, now, deps.classifierConfig.alertCooldownHours)) return;
 
   // Cheap pre-filter on the live numbers before touching snapshot history.
   const volume1h = current.volume1h ?? 0;
   const buys1h = current.buys1h ?? 0;
-  if (volume1h < deps.breakoutMinVolume1hUsd || buys1h < deps.breakoutMinBuys1h) return;
+  // Screened at the *reversal* floors, which are half the breakout ones. Screening at the
+  // full breakout floors here discarded every reversal candidate before it was ever tested,
+  // silently making the lower reversal thresholds dead code.
+  if (volume1h < deps.breakoutMinVolume1hUsd / 2 || buys1h < Math.max(3, Math.floor(deps.breakoutMinBuys1h / 2))) {
+    return;
+  }
 
   const history = snapshotRepo.recentSince(token.address, 0, BASELINE_SAMPLE_LIMIT);
   if (history.length === 0) return;
@@ -1281,7 +1294,7 @@ async function handleBreakoutCandidate(
   // see a coin turning up from its low on ordinary volume, which was the bulk of what this
   // bot was missing.
   const metrics = { volume24h: current.volume24h, volume1h, buys1h, liquidityUsd: current.liquidityUsd };
-  const isBreakoutSurge = meetsBreakoutCriteria(breakoutConfig, metrics, baseline);
+  const isBreakoutSurge = !isDeadCandidate && meetsBreakoutCriteria(breakoutConfig, metrics, baseline);
   const isReversal =
     !isBreakoutSurge &&
     meetsReversalCriteria(
@@ -2219,6 +2232,13 @@ export async function runPollCycle(deps: PollerDeps): Promise<void> {
             // Baseline must be computed from history *before* this cycle's snapshot is inserted.
             if (token.status === "dead") {
               await handleDeadToken(deps, token, current, now);
+              // Dead coins also get the reversal check. Revival only fires on a volume
+              // surge against the dead-period baseline, so a coin whose *price* turns up
+              // off its floor on ordinary volume passed through here unnoticed — which is
+              // the single largest category of miss reported against this bot. The handler
+              // evaluates dead coins for reversal only; a volume surge here is revival's
+              // job and the shared alert cooldown stops both firing on the same move.
+              await handleBreakoutCandidate(deps, token, current, now);
             } else {
               await handleAlertedToken(deps, token, current, now);
             }

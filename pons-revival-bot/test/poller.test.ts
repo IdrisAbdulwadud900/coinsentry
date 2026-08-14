@@ -87,6 +87,7 @@ function baseDeps(
     breakoutVolumeMultiple: 5,
     breakoutMinVolume1hUsd: 3000,
     breakoutMinBuys1h: 30,
+    reversalMultiple: 1.4,
     breakoutCooldownHours: 12,
     ungraduatedFastWindowHours: 6,
     marketCapAlertTiersUsd: [2000, 3000, 4000, 5000, 6000],
@@ -2129,6 +2130,56 @@ describe("observer (alert outcomes + missed winners)", () => {
 
     // Never re-fires.
     await runObserverSweep(deps, now + 1000);
+    expect(sendAlert).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("reversal reaches coins resting on their floor", () => {
+  let db: Db;
+  beforeEach(() => {
+    db = openDatabase(":memory:");
+  });
+
+  // Both bugs this covers made the reversal signal unreachable in production: the handler
+  // required status 'active' (a coin on its floor is 'dead'), and it screened candidates at
+  // the full breakout volume floors before the lower reversal floors were ever applied.
+  it("alerts a dead coin whose price has turned up off its floor on modest volume", async () => {
+    const now = Date.now();
+    const sendAlert = vi.fn(async () => {});
+    const pair = {
+      chainId: "robinhood",
+      dexId: "uniswap",
+      pairAddress: "0xpairAAA",
+      baseToken: { address: "0xAAA", symbol: "FLOOR", name: "Floor" },
+      liquidity: { usd: 4000 },
+      marketCap: 9000,
+      priceUsd: "0.0015",
+      volume: { h1: 1600, h24: 6000 },
+      txns: { h1: { buys: 16, sells: 4 } },
+      info: { websites: [{ url: "https://floor.example" }] },
+    };
+    const { deps, tokenRepo } = baseDeps(db, {
+      dex: { lookupBatch: vi.fn(async () => [pair]) } as unknown as DexScreenerClient,
+      notifier: { sendAlert } as unknown as Notifier,
+      dryRunAlerts: false,
+    });
+    const snapshotRepo = deps.snapshotRepo;
+
+    tokenRepo.insertIfNew("0xAAA", "FLOOR", "Floor", "0xpairAAA", "dead", null, "0xFactory1", ALERTABLE_AGE(now));
+    // A flat history sitting at the floor price of 0.001; current 0.0015 is a 1.5x recovery.
+    for (let i = 5; i > 0; i -= 1) {
+      snapshotRepo.insert(
+        {
+          tokenAddress: "0xAAA", symbol: "FLOOR", name: "Floor", priceUsd: 0.001, marketCapUsd: 6000,
+          liquidityUsd: 4000, volume5m: 0, volume1h: 300, volume24h: 3000, buys5m: 0, buys1h: 4,
+          sells1h: 2, imageUrl: null, websiteUrl: null, socials: [], dexUrl: "", pairCreatedAt: null,
+        },
+        now - i * 600000
+      );
+    }
+
+    await runPollCycle(deps);
+
     expect(sendAlert).toHaveBeenCalledTimes(1);
   });
 });
