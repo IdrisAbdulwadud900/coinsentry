@@ -23,6 +23,7 @@ import {
   meetsEarlyMomentumCriteria,
   meetsMomentumReAlertCriteria,
   meetsBreakoutCriteria,
+  meetsReversalCriteria,
   type ClassifierConfig,
 } from "./classifier.js";
 import {
@@ -123,8 +124,14 @@ const MAX_BREAKOUT_MARKET_CAP_USD = 250_000;
 /** Liquidity and 1h-buy floors a link-less coin must clear to qualify without links
  * (see hasStrongTraction). Set well above the $200 discovery floor so this is a genuine
  * traction bar, not a loophole that lets the spam farm back in. */
-const LINKLESS_MIN_LIQUIDITY_USD = 2_000;
-const LINKLESS_MIN_BUYS_1H = 25;
+const LINKLESS_MIN_LIQUIDITY_USD = 1_200;
+// 25 was set against new-pair launch activity and is far too high for the coins now
+// targeted: "no website or social links" is the single largest block reason in production
+// (4,330 coins in three hours), and of ~1,800 coins scanned per hour only about 64 have a
+// single buy and 9-10 reach 30 buys. Requiring 25 put the bar near the very top of the
+// distribution, so a coin turning up off its floor almost never cleared it. The completed
+// -sell requirement below is what actually proves the token is sellable, and that stays.
+const LINKLESS_MIN_BUYS_1H = 12;
 
 /** How often the fast lane rechecks young 'unindexed' tokens (vs. UNINDEXED_RECHECK_HOURS
  * for old ones) so brand-new pairs get promoted while their momentum window is still open. */
@@ -777,6 +784,8 @@ export interface PollerDeps {
   breakoutMinVolume1hUsd: number;
   breakoutMinBuys1h: number;
   breakoutCooldownHours: number;
+  /** How far price must recover off the sampled floor to count as a reversal. */
+  reversalMultiple: number;
 }
 
 /**
@@ -1267,7 +1276,20 @@ async function handleBreakoutCandidate(
     breakoutMinVolume1hUsd: deps.breakoutMinVolume1hUsd,
     breakoutMinBuys1h: deps.breakoutMinBuys1h,
   };
-  if (!meetsBreakoutCriteria(breakoutConfig, { volume24h: current.volume24h, volume1h, buys1h, liquidityUsd: current.liquidityUsd }, baseline)) {
+  // Either shape of "people are suddenly bidding this" qualifies: a volume breakout, or a
+  // price reversal off the floor. The second exists because the first structurally cannot
+  // see a coin turning up from its low on ordinary volume, which was the bulk of what this
+  // bot was missing.
+  const metrics = { volume24h: current.volume24h, volume1h, buys1h, liquidityUsd: current.liquidityUsd };
+  const isBreakoutSurge = meetsBreakoutCriteria(breakoutConfig, metrics, baseline);
+  const isReversal =
+    !isBreakoutSurge &&
+    meetsReversalCriteria(
+      { ...breakoutConfig, reversalMultiple: deps.reversalMultiple },
+      { ...metrics, priceUsd: current.priceUsd },
+      baseline
+    );
+  if (!isBreakoutSurge && !isReversal) {
     return;
   }
 

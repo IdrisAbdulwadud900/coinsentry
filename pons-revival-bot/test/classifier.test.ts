@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  meetsReversalCriteria,
   median,
   ageHours,
   meetsDeadCriteria,
@@ -241,5 +242,38 @@ describe("buildClassifierConfig", () => {
     expect(live.revivalConfirmPolls).toBe(config.revivalConfirmPolls);
     store.set("revivalConfirmPolls", "5");
     expect(live.revivalConfirmPolls).toBe(5);
+  });
+});
+
+describe("meetsReversalCriteria", () => {
+  const config = { reversalMultiple: 1.4, breakoutMinBuys1h: 15, breakoutMinVolume1hUsd: 1500 };
+  const baseline = { medianVolume1h: 500, medianLiquidityUsd: 5000, sampleSize: 5, minPriceUsd: 0.001 };
+
+  it("fires when price has climbed off the floor with real buying behind it", () => {
+    // 0.0015 is 1.5x the 0.001 floor, past the 1.4x bar.
+    const current = { volume24h: 9000, volume1h: 900, buys1h: 8, liquidityUsd: 5000, priceUsd: 0.0015 };
+    expect(meetsReversalCriteria(config, current, baseline)).toBe(true);
+  });
+
+  it("ignores a coin still sitting on its floor, however much it trades", () => {
+    const current = { volume24h: 90000, volume1h: 9000, buys1h: 80, liquidityUsd: 5000, priceUsd: 0.00101 };
+    expect(meetsReversalCriteria(config, current, baseline)).toBe(false);
+  });
+
+  it("ignores a price spike that no crowd is behind (one buyer walking a thin pool up)", () => {
+    const current = { volume24h: 9000, volume1h: 900, buys1h: 1, liquidityUsd: 5000, priceUsd: 0.003 };
+    expect(meetsReversalCriteria(config, current, baseline)).toBe(false);
+  });
+
+  it("refuses to call a reversal without enough history to know where the floor is", () => {
+    const thin = { ...baseline, sampleSize: 2 };
+    const current = { volume24h: 9000, volume1h: 900, buys1h: 8, liquidityUsd: 5000, priceUsd: 0.003 };
+    expect(meetsReversalCriteria(config, current, thin)).toBe(false);
+  });
+
+  it("stays silent when no sampled price was usable, rather than inventing a floor", () => {
+    const noPrice = { ...baseline, minPriceUsd: null };
+    const current = { volume24h: 9000, volume1h: 900, buys1h: 8, liquidityUsd: 5000, priceUsd: 0.003 };
+    expect(meetsReversalCriteria(config, noPrice, baseline && noPrice)).toBe(false);
   });
 });

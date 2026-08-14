@@ -77,6 +77,10 @@ const ConfigSchema = z.object({
   BREAKOUT_MIN_VOLUME_1H_USD: z.coerce.number().nonnegative().default(3000),
   BREAKOUT_MIN_BUYS_1H: z.coerce.number().int().nonnegative().default(30),
   BREAKOUT_COOLDOWN_HOURS: z.coerce.number().positive().default(12),
+  // How far price must climb off the sampled low to count as reversing off the floor.
+  // 1.4 = 40% up from the bottom: enough to distinguish a real turn from tick noise,
+  // low enough to catch the move while it is still worth catching.
+  REVERSAL_MULTIPLE: z.coerce.number().positive().default(1.4),
   PONS_FACTORY_ACTIVE: z.string().min(1),
   PONS_FACTORY_ACTIVE_START_BLOCK: z.coerce.number().int().nonnegative(),
   PONS_FACTORY_LEGACY: z.string().min(1),

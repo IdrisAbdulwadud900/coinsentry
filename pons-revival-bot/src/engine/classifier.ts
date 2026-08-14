@@ -97,15 +97,20 @@ export interface Baseline {
   medianVolume1h: number;
   medianLiquidityUsd: number;
   sampleSize: number;
+  /** Lowest price seen across the sampled window — the "floor" a reversal bounces off.
+   * Null when no sample carried a usable price. */
+  minPriceUsd: number | null;
 }
 
 export function computeBaseline(
-  history: { volume_1h: number | null; liquidity_usd: number | null }[]
+  history: { volume_1h: number | null; liquidity_usd: number | null; price_usd?: number | null }[]
 ): Baseline {
+  const prices = history.map((h) => h.price_usd ?? 0).filter((p) => p > 0);
   return {
     medianVolume1h: median(history.map((h) => h.volume_1h ?? 0)),
     medianLiquidityUsd: median(history.map((h) => h.liquidity_usd ?? 0)),
     sampleSize: history.length,
+    minPriceUsd: prices.length > 0 ? Math.min(...prices) : null,
   };
 }
 
@@ -160,6 +165,39 @@ export function meetsBreakoutCriteria(config: BreakoutConfig, current: LatestMet
   const buysOk = buys1h >= config.breakoutMinBuys1h;
 
   return volumeMultipleOk && volumeFloorOk && buysOk;
+}
+
+/**
+ * A coin turning back up off its floor.
+ *
+ * meetsBreakoutCriteria is purely volume-and-buys, so it only ever sees a coin that is
+ * *already* being hammered. A reversal looks different: price has bottomed and started
+ * climbing while volume may still be ordinary, which is precisely the moment worth knowing
+ * about and precisely what the volume test cannot express. Coins recovering off the floor
+ * were being missed for exactly this reason.
+ *
+ * The price must be meaningfully above the window's low (not noise), there must be real
+ * buying behind the move rather than a single trade lifting a thin pool, and — as with
+ * every other signal here — the reading is only trusted when the pool can support it.
+ */
+export function meetsReversalCriteria(
+  config: { reversalMultiple: number; breakoutMinBuys1h: number; breakoutMinVolume1hUsd: number },
+  current: LatestMetrics & { priceUsd?: number | null },
+  baseline: Baseline
+): boolean {
+  if (baseline.sampleSize < 3) return false;
+  const floor = baseline.minPriceUsd;
+  const price = current.priceUsd ?? 0;
+  if (floor == null || floor <= 0 || price <= 0) return false;
+
+  const recoveredOffFloor = price >= floor * config.reversalMultiple;
+  // Half the breakout thresholds: a reversal is caught earlier than a full breakout, so
+  // demanding breakout-sized volume would defeat the point — but it still has to be a
+  // crowd, not one buyer walking a dead pool up.
+  const buysOk = (current.buys1h ?? 0) >= Math.max(3, Math.floor(config.breakoutMinBuys1h / 2));
+  const volumeOk = (current.volume1h ?? 0) >= config.breakoutMinVolume1hUsd / 2;
+
+  return recoveredOffFloor && buysOk && volumeOk;
 }
 
 export function isInCooldown(lastAlertAtMs: number | null, nowMs: number, cooldownHours: number): boolean {

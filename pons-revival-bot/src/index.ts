@@ -159,6 +159,7 @@ async function main(): Promise<void> {
     breakoutMinVolume1hUsd: config.BREAKOUT_MIN_VOLUME_1H_USD,
     breakoutMinBuys1h: config.BREAKOUT_MIN_BUYS_1H,
     breakoutCooldownHours: config.BREAKOUT_COOLDOWN_HOURS,
+    reversalMultiple: config.REVERSAL_MULTIPLE,
   };
 
   const poller = new Poller({
