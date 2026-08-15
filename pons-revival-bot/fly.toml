@@ -59,6 +59,13 @@ primary_region = "iad"
   # process dies partway through a cycle at 8000 (~4 min) and at 1500 (~9 min). 400 keeps a
   # cycle comfortably inside the limit so the bot actually runs and alerts while the
   # remaining leak is chased down.
+  # Sized to the measured crash threshold, not to ambition. Prioritising coins that are
+  # actually trading (see listTrackableForCycle) re-exposed the per-token leak: previously
+  # most of a batch was idle coins that the activity filter skipped, and now nearly every
+  # scanned coin runs the full handler chain, which dies after roughly 400 of them. 350
+  # stays under that. Because the hot set sorts first and rotates oldest-checked within
+  # itself, the ~1,300 genuinely active coins are each revisited about hourly — against
+  # roughly every 40 hours before this ordering existed.
   MARKET_SCAN_BATCH_SIZE = "4000"
 
   DEAD_MIN_AGE_HOURS = "24"

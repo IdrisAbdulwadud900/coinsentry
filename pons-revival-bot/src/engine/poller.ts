@@ -2219,6 +2219,8 @@ export async function runPollCycle(deps: PollerDeps): Promise<void> {
           if (scanned % 50 === 0) maybeDumpHeap(deps, scanned);
 
           const hasLiveTrade = (current.buys1h ?? 0) > 0 || (current.volume1h ?? 0) > 0;
+          // Recorded on the row so the next cycle's scan can prioritise this coin cheaply.
+          if (hasLiveTrade) tokenRepo.markTraded(token.address, now);
           if (!hasLiveTrade && !hasPriorAlertSignal(token)) {
             snapshotRepo.insert(current, now);
             continue;

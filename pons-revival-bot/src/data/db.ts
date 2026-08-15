@@ -213,6 +213,13 @@ function migrate(db: Database.Database): void {
   if (!columnNames.has("chain")) {
     db.exec("ALTER TABLE tokens ADD COLUMN chain TEXT NOT NULL DEFAULT 'robinhood'");
   }
+  // When the coin was last seen actually trading. Lets the market scan put live coins at
+  // the front without correlating a subquery against the multi-million-row snapshots table
+  // for every token on every cycle, which was heavy enough to kill the process outright.
+  if (!columnNames.has("last_traded_at")) {
+    db.exec("ALTER TABLE tokens ADD COLUMN last_traded_at INTEGER NOT NULL DEFAULT 0");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_tokens_last_traded_at ON tokens(last_traded_at)");
+  }
 
   // alert_outcomes existed for one release without warning_sent; add it for those DBs.
   const outcomeColumns = db.prepare("SELECT name FROM pragma_table_info('alert_outcomes')").all() as { name: string }[];

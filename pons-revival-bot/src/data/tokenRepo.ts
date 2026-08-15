@@ -107,10 +107,7 @@ export class TokenRepo {
           // Same activity-first ordering as the unfocused path below; see the comment there.
           `SELECT t.* FROM tokens t
            WHERE t.status != 'unindexed' AND t.chain IN (${placeholders})
-           ORDER BY (CASE WHEN EXISTS (
-                       SELECT 1 FROM snapshots s
-                       WHERE s.address = t.address AND s.ts > ? AND s.volume_1h > 0
-                     ) THEN 0 ELSE 1 END) ASC,
+           ORDER BY (CASE WHEN t.last_traded_at > ? THEN 0 ELSE 1 END) ASC,
                     (CASE WHEN t.status IN ('dead', 'alerted') THEN 0 ELSE 1 END) ASC,
                     COALESCE(t.market_checked_at, 0) ASC
            LIMIT ?`
@@ -119,9 +116,11 @@ export class TokenRepo {
     }
     return this.db
       .prepare<[number, number], TokenRow>(
-        // Coins that have actually traded recently come first, and there are few enough of
-        // them (~1,300 of 57,000) that they all fit inside one cycle's budget — so anything
-        // with live trading is re-checked every cycle rather than once every ~40 hours.
+        // Coins that have actually traded recently come first, read from an indexed column
+        // on the row itself. The first version of this correlated a subquery against the
+        // 2.4M-row snapshots table for every one of 57,000 tokens on every cycle, and the
+        // process began dying on the heap limit within ~5 minutes at every batch size tried
+        // (4000, 350 and 120 alike) — the cost was in the ordering, not the batch.
         //
         // Even ordering was the single largest cause of missed moves: the budget was spent
         // mostly on coins that had not traded in a day, while a coin that was moving right
@@ -130,10 +129,7 @@ export class TokenRepo {
         // the hot set, so nothing starves.
         `SELECT t.* FROM tokens t
          WHERE t.status != 'unindexed'
-         ORDER BY (CASE WHEN EXISTS (
-                     SELECT 1 FROM snapshots s
-                     WHERE s.address = t.address AND s.ts > ? AND s.volume_1h > 0
-                   ) THEN 0 ELSE 1 END) ASC,
+         ORDER BY (CASE WHEN t.last_traded_at > ? THEN 0 ELSE 1 END) ASC,
                   (CASE WHEN t.status IN ('dead', 'alerted') THEN 0 ELSE 1 END) ASC,
                   COALESCE(t.market_checked_at, 0) ASC
          LIMIT ?`
@@ -143,6 +139,12 @@ export class TokenRepo {
 
   /** Stamps a batch of tokens as market-checked, in one transaction (per-row autocommit
    * would fsync once per token and dominate the cycle's runtime). */
+  /** Stamps when a coin was last seen trading, so the scan can prioritise it without
+   * joining the snapshots table on every cycle. */
+  markTraded(address: string, now: number): void {
+    this.db.prepare("UPDATE tokens SET last_traded_at = ? WHERE address = ?").run(now, normalizeAddress(address));
+  }
+
   markMarketChecked(addresses: string[], now: number): void {
     if (addresses.length === 0) return;
     const stmt = this.db.prepare("UPDATE tokens SET market_checked_at = ? WHERE address = ?");
