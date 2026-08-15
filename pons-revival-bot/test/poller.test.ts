@@ -757,9 +757,14 @@ describe("runMomentumFastSweep", () => {
     expect(html).not.toContain("dev hold"); // a sold dev is not a risk, so nothing is printed
   });
 
-  it("blocks the momentum alert when market cap is above the hardcoded $11k entry cap", async () => {
+  // $20k used to be blocked here by the $11k launch cap. That cap is for catching a coin
+  // before it moves, which cannot apply to a signal that now describes an established coin
+  // being suddenly bid — in production it was rejecting real movers at $17k, $20k, $44k
+  // and $99k. Momentum takes the established ceiling instead, so $20k passes and only a
+  // genuinely implausible market cap is refused.
+  it("alerts an established coin above the $11k launch cap, but still refuses one above the established ceiling", async () => {
     const now = Date.now();
-    const lookupBatch = vi.fn(async () => [fakePair("0xAAA", 20, 5000, 20_000)]);
+    const lookupBatch = vi.fn(async () => [fakePair("0xAAA", 20, 5000, 900_000)]);
     const sendAlert = vi.fn(async () => {});
     const { deps, tokenRepo } = baseDeps(db, {
       dex: { lookupBatch } as unknown as DexScreenerClient,

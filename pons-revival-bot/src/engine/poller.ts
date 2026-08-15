@@ -117,9 +117,16 @@ const MIN_ALERT_BUYS_1H = 5;
  */
 const MIN_ALERT_AGE_MINUTES = 60;
 
-/** Ceiling for breakout alerts specifically — see the maxMarketCapUsd note on
- * entryAlertBlockReason for why these cannot share the launch cap. */
-const MAX_BREAKOUT_MARKET_CAP_USD = 250_000;
+/**
+ * Ceiling for signals about *established* coins — breakouts and momentum.
+ *
+ * These cannot share the $11k launch cap: it exists to catch a coin before it moves, which
+ * only makes sense for something just launched. A coin over an hour old that is suddenly
+ * being bid has almost always cleared $11k long before the bidding shows up, so the launch
+ * cap silently rejects exactly the coins these signals exist to find — observed in
+ * production blocking real movers at $17k, $20k, $44k and $99k.
+ */
+const MAX_ESTABLISHED_MARKET_CAP_USD = 250_000;
 
 /** Liquidity and 1h-buy floors a link-less coin must clear to qualify without links
  * (see hasStrongTraction). Set well above the $200 discovery floor so this is a genuine
@@ -1312,7 +1319,7 @@ async function handleBreakoutCandidate(
       resolveMarketCapUsd(current),
       current,
       alertAgeMinutes(token, now),
-      MAX_BREAKOUT_MARKET_CAP_USD
+      MAX_ESTABLISHED_MARKET_CAP_USD
     ) ??
     (await convictionBlockReason(deps, token, now, true));
   if (gateReason) {
@@ -1895,7 +1902,15 @@ export async function runMomentumFastSweep(deps: PollerDeps, now: number): Promi
     // later in its momentum window can still get its alert. The bundle check runs after —
     // early-buy concentration is fixed at launch, so that block is permanent and the
     // incremented counter correctly suppresses endless re-checks.
-    const gateReason = entryAlertBlockReason(current.marketCapUsd, current, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
+    // Momentum now describes an established coin being suddenly bid, not a new pair in its
+    // first hour, so it takes the established ceiling rather than the launch cap.
+    const gateReason =
+      entryAlertBlockReason(
+        current.marketCapUsd,
+        current,
+        alertAgeMinutes(token, now),
+        MAX_ESTABLISHED_MARKET_CAP_USD
+      ) ?? (await convictionBlockReason(deps, token, now));
     if (gateReason) {
       recordGateBlock(deps, token, "momentum", gateReason);
       continue;
