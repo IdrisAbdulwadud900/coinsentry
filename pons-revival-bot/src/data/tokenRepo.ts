@@ -2,6 +2,9 @@ import type { Db } from "./db.js";
 import type { TokenRow, TokenStatus } from "../types/domain.js";
 import { normalizeAddress, DEFAULT_CHAIN } from "./chains.js";
 
+/** How recently a coin must have traded to join the priority ("hot") scan set. */
+const HOT_SET_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 export class TokenRepo {
   constructor(private readonly db: Db) {}
 
@@ -101,21 +104,41 @@ export class TokenRepo {
       const placeholders = chains.map(() => "?").join(", ");
       return this.db
         .prepare<(string | number)[], TokenRow>(
-          `SELECT * FROM tokens WHERE status != 'unindexed' AND chain IN (${placeholders})
-           ORDER BY (CASE WHEN status IN ('dead', 'alerted') THEN 0 ELSE 1 END) ASC,
-                    COALESCE(market_checked_at, 0) ASC
+          // Same activity-first ordering as the unfocused path below; see the comment there.
+          `SELECT t.* FROM tokens t
+           WHERE t.status != 'unindexed' AND t.chain IN (${placeholders})
+           ORDER BY (CASE WHEN EXISTS (
+                       SELECT 1 FROM snapshots s
+                       WHERE s.address = t.address AND s.ts > ? AND s.volume_1h > 0
+                     ) THEN 0 ELSE 1 END) ASC,
+                    (CASE WHEN t.status IN ('dead', 'alerted') THEN 0 ELSE 1 END) ASC,
+                    COALESCE(t.market_checked_at, 0) ASC
            LIMIT ?`
         )
-        .all(...chains, limit);
+        .all(...chains, Date.now() - HOT_SET_WINDOW_MS, limit);
     }
     return this.db
-      .prepare<[number], TokenRow>(
-        `SELECT * FROM tokens WHERE status != 'unindexed'
-         ORDER BY (CASE WHEN status IN ('dead', 'alerted') THEN 0 ELSE 1 END) ASC,
-                  COALESCE(market_checked_at, 0) ASC
+      .prepare<[number, number], TokenRow>(
+        // Coins that have actually traded recently come first, and there are few enough of
+        // them (~1,300 of 57,000) that they all fit inside one cycle's budget — so anything
+        // with live trading is re-checked every cycle rather than once every ~40 hours.
+        //
+        // Even ordering was the single largest cause of missed moves: the budget was spent
+        // mostly on coins that had not traded in a day, while a coin that was moving right
+        // now waited its turn behind them. A surge lasting an hour cannot be caught by a
+        // scan that comes round every 40. The tail still round-robins oldest-first behind
+        // the hot set, so nothing starves.
+        `SELECT t.* FROM tokens t
+         WHERE t.status != 'unindexed'
+         ORDER BY (CASE WHEN EXISTS (
+                     SELECT 1 FROM snapshots s
+                     WHERE s.address = t.address AND s.ts > ? AND s.volume_1h > 0
+                   ) THEN 0 ELSE 1 END) ASC,
+                  (CASE WHEN t.status IN ('dead', 'alerted') THEN 0 ELSE 1 END) ASC,
+                  COALESCE(t.market_checked_at, 0) ASC
          LIMIT ?`
       )
-      .all(limit);
+      .all(Date.now() - HOT_SET_WINDOW_MS, limit);
   }
 
   /** Stamps a batch of tokens as market-checked, in one transaction (per-row autocommit

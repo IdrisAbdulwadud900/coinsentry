@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { openDatabase, type Db } from "../src/data/db.js";
 import { TokenRepo } from "../src/data/tokenRepo.js";
+import { SnapshotRepo } from "../src/data/snapshotRepo.js";
 
 describe("TokenRepo round-robin market scan", () => {
   let db: Db;
@@ -399,5 +400,36 @@ describe("TokenRepo.insertIfNew launch_block", () => {
   it("defaults launch_block to null when omitted (legacy call sites)", () => {
     repo.insertIfNew("0xAAA", "FOO", "Foo Token", "0xpairAAA", "active", null, "0xFactory1", Date.now());
     expect(repo.findByAddress("0xaaa")?.launch_block).toBeNull();
+  });
+});
+
+describe("listTrackableForCycle prioritises coins that are actually trading", () => {
+  // Even round-robin ordering was the largest cause of missed moves in production: with
+  // ~57,000 trackable coins and only ~1,465 scanned per hour, any given coin waited ~40
+  // hours for its turn — while just ~1,300 coins had traded at all in the last day. A
+  // surge lasting an hour cannot be seen by a scan that comes round every 40.
+  it("puts a recently-trading coin ahead of a long-idle one that is more overdue", () => {
+    const db = openDatabase(":memory:");
+    const tokenRepo = new TokenRepo(db);
+    const snapshotRepo = new SnapshotRepo(db);
+    const now = Date.now();
+
+    // IDLE is far more overdue by the old ordering, so it would have gone first.
+    tokenRepo.insertIfNew("0x1d1e0000000000000000000000000000000000aa", "IDLE", "Idle", "0xp1", "active", null, null, now - 86400000);
+    tokenRepo.insertIfNew("0xb0770000000000000000000000000000000000bb", "HOT", "Hot", "0xp2", "active", null, null, now - 86400000);
+    tokenRepo.markMarketChecked(["0x1d1e0000000000000000000000000000000000aa"], now - 40 * 3600000);
+    tokenRepo.markMarketChecked(["0xb0770000000000000000000000000000000000bb"], now - 60000);
+
+    snapshotRepo.insert(
+      {
+        tokenAddress: "0xb0770000000000000000000000000000000000bb", symbol: "HOT", name: "Hot", priceUsd: 0.01, marketCapUsd: 9000,
+        liquidityUsd: 4000, volume5m: 10, volume1h: 800, volume24h: 5000, buys5m: 2, buys1h: 9,
+        sells1h: 3, imageUrl: null, websiteUrl: null, socials: [], dexUrl: "", pairCreatedAt: null,
+      },
+      now - 60000
+    );
+
+    const order = tokenRepo.listTrackableForCycle(10).map((t) => t.address);
+    expect(order[0]).toBe("0xb0770000000000000000000000000000000000bb");
   });
 });
