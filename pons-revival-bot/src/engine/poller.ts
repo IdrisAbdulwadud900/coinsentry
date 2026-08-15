@@ -2083,14 +2083,16 @@ export async function runFastCycle(deps: PollerDeps): Promise<void> {
  * Writes one heap snapshot while the process still has room to serialise it.
  *
  * Taking it at the heap limit does not work — V8 needs memory to write the file and every
- * dump produced that way was 0 bytes. This fires at 300MB, comfortably inside the 512MB
- * ceiling, and only once per process, so it costs nothing on a healthy run.
+ * dump produced that way was 0 bytes. The first attempt at 300MB, checked every 50 coins,
+ * never fired either: the process goes from under the threshold to dead between checks,
+ * which says the failure is one large allocation rather than a slow drip. 200MB checked
+ * every 10 coins is set to land in front of it. Fires once per process.
  */
 let heapDumpWritten = false;
 function maybeDumpHeap(deps: PollerDeps, processed: number): void {
   if (heapDumpWritten) return;
   const heapUsedMB = process.memoryUsage().heapUsed / 1048576;
-  if (heapUsedMB < 300) return;
+  if (heapUsedMB < 200) return;
   heapDumpWritten = true;
   try {
     const file = v8.writeHeapSnapshot("/data/leak.heapsnapshot");
@@ -2216,7 +2218,7 @@ export async function runPollCycle(deps: PollerDeps): Promise<void> {
           // snapshot is still written below, so baselines stay continuous and a coin that
           // starts trading is picked up on the very next pass.
           scanned += 1;
-          if (scanned % 50 === 0) maybeDumpHeap(deps, scanned);
+          if (scanned % 10 === 0) maybeDumpHeap(deps, scanned);
 
           const hasLiveTrade = (current.buys1h ?? 0) > 0 || (current.volume1h ?? 0) > 0;
           // Recorded on the row so the next cycle's scan can prioritise this coin cheaply.

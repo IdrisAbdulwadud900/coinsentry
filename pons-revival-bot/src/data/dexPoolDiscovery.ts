@@ -454,13 +454,20 @@ export function buildPoolChainConfigs(rpcUrls: {
       // have stopped just short of ABE (0x759d161b…), a pool created 7.9 days before it
       // was noticed running $3k -> $26k. Since the sweep now stores only historical tokens
       // that still have live liquidity, reaching further back costs lookups, not disk.
-      historyBlocks: 9_000_000,
+      // Deep scan: with the chain head near 37M, a 40M window puts the floor at genesis, so
+      // the backward sweep keeps digging until the entire chain has been covered and then
+      // stops on its own. It is deliberately slow — a few chunks per cycle — because the
+      // point is completeness over days without competing with the live scan for the cycle.
+      // Cost stays flat regardless of depth: only coins that still have live liquidity are
+      // stored (see the historical filter below), so the volume does not fill with a decade
+      // of dead launches.
+      historyBlocks: 40_000_000,
       // Deliberately small. At 15 chunks this sweep plus the DexScreener lookups for the
       // hundreds of tokens it turned up consumed the entire poll cycle: the cycle stopped
       // finishing, the fast poller logged "previous cycle still running" every tick, and
       // no market snapshot was written for over an hour — which means no alerts at all.
       // Backfilling history is a background nicety; the live market scan is the product.
-      backfillChunksPerCycle: 3,
+      backfillChunksPerCycle: 4,
       maxHistoricalInsertsPerCycle: 100,
       // 5 x 20k = 100k blocks/cycle, well ahead of the ~8.9k this chain produces
       // between cycles, so it still catches up — just never in one unbounded pass.
