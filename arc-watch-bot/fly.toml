@@ -1,0 +1,29 @@
+# Fly.io app configuration for arc-watch-bot. Plain worker — no HTTP service.
+# Replace `app` with the unique name chosen during `fly launch`.
+app = "arc-watch-bot"
+primary_region = "iad"
+
+[build]
+
+[env]
+  DB_PATH = "/data/arc-watch.db"
+  LOG_LEVEL = "info"
+  # Flip to "false" (and set the Telegram secrets) to go live.
+  DRY_RUN_ALERTS = "true"
+  POLL_INTERVAL_SECONDS = "15"
+  ACCESS_PROBE_INTERVAL_SECONDS = "300"
+  MIN_LIQUIDITY_USDC = "1000"
+  ALERT_RECENCY_BLOCKS = "7200"
+  SPAM_DEPLOYER_THRESHOLD = "10"
+  DISCOVERY_START_BLOCK = "12600000"
+
+# TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are secrets, NOT set here.
+# Set them with: fly secrets set TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...
+
+[mounts]
+  source = "arc_watch_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
