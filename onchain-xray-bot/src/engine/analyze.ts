@@ -31,7 +31,7 @@ import { buildDevGraph } from './devGraph.js';
 import { buildProviderEntries, findProviderDiamondHands } from './providerEntries.js';
 import { rateFromTokenResults, type SmartMoney } from './smartMoney.js';
 import { buildWinner, rankWinners, qualifiesOnThisCoin, type ProvenWinner } from './provenWinners.js';
-import { rankPlays } from './winningPlay.js';
+import { rankPlays, fromFirstBuyer, fromLedger } from './winningPlay.js';
 import {
   extractFundingPeers,
   findSideWallets,
@@ -261,7 +261,18 @@ export async function analyzeToken(
   // Style comes from the first-buyer records, not the profit leaderboard: only
   // that endpoint returns timestamps and buy/sell counts, and without them a
   // wallet cannot be placed. Costs no extra request — it is already fetched.
-  const winningPlays = rankPlays(history.providerFirstBuyers, meta.createdAt);
+  //
+  // EVM chains have no such provider, but the replay produced the same facts
+  // first-hand, so the ledgers stand in. Whichever source saw more wallets
+  // wins, since a thin sample is what makes this misleading.
+  const playsFromProvider = rankPlays(
+    history.providerFirstBuyers.map(fromFirstBuyer),
+    meta.createdAt,
+  );
+  const playsFromLedgers = rankPlays([...ledgers.values()].map(fromLedger), meta.createdAt);
+  const providerWallets = playsFromProvider.reduce((n, p) => n + p.wallets, 0);
+  const ledgerWallets = playsFromLedgers.reduce((n, p) => n + p.wallets, 0);
+  const winningPlays = ledgerWallets > providerWallets ? playsFromLedgers : playsFromProvider;
 
   await onProgress({ stage: 'Tracing supply relays', pct: 0.9 });
   const supplyRelays = findSupplyRelays(history.supplyTransfers, ledgers, ctx, chain);
@@ -717,6 +728,7 @@ async function loadEvmHistory(
       pairCreatedAt: meta.createdAt,
       nativePriceAt: (ts) => oracle.at(ts),
       quoteToken,
+      dexId: meta.dexId ?? undefined,
     },
     (pct, detail) => {
       void onProgress({ stage: 'Replaying pair logs', detail, pct: 0.15 + pct * 0.5 });

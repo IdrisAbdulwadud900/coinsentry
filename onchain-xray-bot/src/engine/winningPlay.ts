@@ -1,4 +1,5 @@
 import type { FirstBuyer } from '../data/solanatracker.js';
+import type { WalletLedger } from '../types/domain.js';
 import { config } from '../config.js';
 
 /**
@@ -17,11 +18,16 @@ import { config } from '../config.js';
  *    so a coin that ran for an hour and one that ran for a month are comparable.
  *  - WHAT they did after, from the buy and sell counts and what is still held.
  *
- * The input is the first-buyer record rather than the profit leaderboard: only
- * that endpoint returns timestamps and buy/sell counts, and without them a
- * wallet cannot be placed at all. It is already fetched, so this costs no extra
- * request — but it does mean coverage is the earliest wallets, which is stated
- * on the screen rather than papered over.
+ * Two very different sources feed this, so it takes a neutral input rather than
+ * either one's row type. On Solana it reads the first-buyer record — NOT the
+ * profit leaderboard, which returns profit but no timestamps and no buy/sell
+ * counts, leaving nothing to classify on. On EVM chains there is no such
+ * provider at all, and the input is our own replayed ledgers, which carry the
+ * same facts because we derived them ourselves.
+ *
+ * Each source therefore brings its own coverage limit: the earliest wallets on
+ * Solana, and whatever the replay window reached on EVM. Both are stated on the
+ * screen rather than papered over.
  */
 
 export type PlayKind =
@@ -72,6 +78,54 @@ export const PLAY_META: Record<PlayKind, PlayMeta> = {
   },
 };
 
+/**
+ * The facts a wallet must supply to be classified, independent of where they
+ * came from. `stillHolding` is passed in rather than derived: the replay knows
+ * it exactly from the running balance, while the provider only exposes token
+ * counts, and each should give its own best answer.
+ */
+export interface PlayInput {
+  wallet: string;
+  firstBuyTs: number | null;
+  firstSellTs: number | null;
+  lastActivityTs: number | null;
+  investedUsd: number;
+  profitUsd: number;
+  buyCount: number;
+  sellCount: number;
+  stillHolding: boolean;
+}
+
+/** Solana: the provider's first-buyer record. */
+export function fromFirstBuyer(b: FirstBuyer): PlayInput {
+  return {
+    wallet: b.wallet,
+    firstBuyTs: b.firstBuyTs,
+    firstSellTs: b.firstSellTs,
+    lastActivityTs: b.lastActivityTs,
+    investedUsd: b.totalInvestedUsd,
+    profitUsd: b.totalPnlUsd,
+    buyCount: b.buyCount,
+    sellCount: b.sellCount,
+    stillHolding: b.holdingTokens > 0 && b.holdingTokens / Math.max(b.heldTokens, 1) > 0.02,
+  };
+}
+
+/** EVM: our own replayed ledger, which has no provider equivalent. */
+export function fromLedger(l: WalletLedger): PlayInput {
+  return {
+    wallet: l.wallet,
+    firstBuyTs: l.firstBuyTs || null,
+    firstSellTs: l.firstSellTs,
+    lastActivityTs: l.lastActivityTs || null,
+    investedUsd: l.totalBoughtUsd,
+    profitUsd: l.totalPnlUsd,
+    buyCount: l.buyCount,
+    sellCount: l.sellCount,
+    stillHolding: l.stillHolding,
+  };
+}
+
 /** One style, with what it actually earned on this coin. */
 export interface PlayGroup {
   kind: PlayKind;
@@ -95,17 +149,12 @@ function median(xs: number[]): number {
 }
 
 /** Seconds from launch to this wallet's first buy, when both are known. */
-export function entryDelay(b: FirstBuyer, launchTs: number | null): number | null {
+export function entryDelay(b: PlayInput, launchTs: number | null): number | null {
   if (!launchTs || !b.firstBuyTs) return null;
   const delay = b.firstBuyTs - launchTs;
   // A negative delay means the launch timestamp is the pool's, not the token's,
   // which happens on migrated coins. Treat it as a snipe rather than guessing.
   return delay < 0 ? 0 : delay;
-}
-
-/** True when most of the position was never sold. */
-export function stillHolding(b: FirstBuyer): boolean {
-  return b.holdingTokens > 0 && b.holdingTokens / Math.max(b.heldTokens, 1) > 0.02;
 }
 
 /**
@@ -116,9 +165,9 @@ export function stillHolding(b: FirstBuyer): boolean {
  * after seven seconds and keeping the rest is not a seven-second hold, and
  * measuring it that way made the screen say "sat on it, held 7s".
  */
-export function holdSeconds(b: FirstBuyer): number | null {
+export function holdSeconds(b: PlayInput): number | null {
   if (!b.firstBuyTs) return null;
-  const exit = stillHolding(b) ? (b.lastActivityTs ?? b.firstSellTs) : (b.firstSellTs ?? b.lastActivityTs);
+  const exit = b.stillHolding ? (b.lastActivityTs ?? b.firstSellTs) : (b.firstSellTs ?? b.lastActivityTs);
   if (!exit || exit < b.firstBuyTs) return null;
   return exit - b.firstBuyTs;
 }
@@ -130,12 +179,12 @@ export function holdSeconds(b: FirstBuyer): number | null {
  * out rather than dropped into a default bucket, which would quietly inflate
  * whichever style that happened to be.
  */
-export function classifyPlay(b: FirstBuyer, launchTs: number | null): PlayKind | null {
+export function classifyPlay(b: PlayInput, launchTs: number | null): PlayKind | null {
   const delay = entryDelay(b, launchTs);
   if (delay === null) return null;
 
   const held = holdSeconds(b);
-  const holding = stillHolding(b);
+  const holding = b.stillHolding;
   const sniped = delay <= config.PLAY_SNIPE_SECONDS;
   const early = delay <= config.PLAY_EARLY_SECONDS;
   const quick = held !== null && held <= config.PLAY_FLIP_SECONDS;
@@ -159,11 +208,11 @@ export function classifyPlay(b: FirstBuyer, launchTs: number | null): PlayKind |
  * answer a different question — this is "what worked here", not "what was
  * popular here", and those diverge badly on coins where most buyers lost.
  */
-export function rankPlays(buyers: FirstBuyer[], launchTs: number | null): PlayGroup[] {
-  const groups = new Map<PlayKind, FirstBuyer[]>();
+export function rankPlays(buyers: PlayInput[], launchTs: number | null): PlayGroup[] {
+  const groups = new Map<PlayKind, PlayInput[]>();
 
   for (const b of buyers) {
-    if (b.totalPnlUsd < config.PLAY_MIN_PROFIT_USD) continue;
+    if (b.profitUsd < config.PLAY_MIN_PROFIT_USD) continue;
     const kind = classifyPlay(b, launchTs);
     if (!kind) continue;
     groups.set(kind, [...(groups.get(kind) ?? []), b]);
@@ -172,19 +221,19 @@ export function rankPlays(buyers: FirstBuyer[], launchTs: number | null): PlayGr
   const out: PlayGroup[] = [];
   for (const [kind, members] of groups) {
     const multiples = members.map((m) =>
-      m.totalInvestedUsd > 0 ? (m.totalInvestedUsd + m.totalPnlUsd) / m.totalInvestedUsd : 0,
+      m.investedUsd > 0 ? (m.investedUsd + m.profitUsd) / m.investedUsd : 0,
     );
     const holds = members.map(holdSeconds).filter((h): h is number => h !== null);
-    const best = members.reduce((a, b) => (b.totalPnlUsd > a.totalPnlUsd ? b : a));
+    const best = members.reduce((a, b) => (b.profitUsd > a.profitUsd ? b : a));
 
     out.push({
       kind,
       wallets: members.length,
-      profitUsd: members.reduce((sum, m) => sum + m.totalPnlUsd, 0),
+      profitUsd: members.reduce((sum, m) => sum + m.profitUsd, 0),
       medianMultiple: median(multiples),
       medianHoldSeconds: holds.length > 0 ? median(holds) : null,
       bestWallet: best.wallet,
-      bestProfitUsd: best.totalPnlUsd,
+      bestProfitUsd: best.profitUsd,
     });
   }
 

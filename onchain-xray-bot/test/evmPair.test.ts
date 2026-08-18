@@ -18,6 +18,7 @@ interface ChainState {
   swapsV2: { quoteIn: bigint; quoteOut: bigint; tx: string; block: bigint }[];
   logsThrow?: boolean;
   logCalls?: number;
+  eventShapes?: string[];
 }
 
 let state: ChainState;
@@ -48,6 +49,7 @@ vi.mock('viem', async () => {
       },
       getLogs: async ({ event }: { event: { name: string; inputs: unknown[] } }) => {
         state.logCalls = (state.logCalls ?? 0) + 1;
+        state.eventShapes = [...(state.eventShapes ?? []), `${event.name}/${event.inputs.length}`];
         if (state.logsThrow) throw new Error('range refused');
         if (event.name === 'Transfer') {
           return state.transfers.map((t) => ({
@@ -239,5 +241,31 @@ describe('coverage windows', () => {
     await new EvmClient('base').replay(TOKEN, PAIR, { ...opts(), pairCreatedAt: 1_600_000_000 });
     // 50M blocks at 10k each would be 5,000 chunks per stream unbounded.
     expect(state.logCalls!).toBeLessThan(5_000);
+  });
+});
+
+
+describe('V3 swap variant follows the pool\'s DEX', () => {
+  // PancakeSwap V3 appends two protocol-fee fields. They are unindexed, so the
+  // signature and topic0 differ and a Uniswap V3 filter matches nothing — which
+  // is exactly how a BSC token read 356,623 transfers and zero swaps.
+  it('asks for the 7-input Uniswap event by default', async () => {
+    await new EvmClient('base').replay(TOKEN, PAIR, opts());
+    expect(state.eventShapes).toContain('Swap/7');
+    expect(state.eventShapes).not.toContain('Swap/9');
+  });
+
+  it('asks for the 9-input PancakeSwap event on a pancake pool', async () => {
+    await new EvmClient('bsc').replay(TOKEN, PAIR, { ...opts(), dexId: 'pancakeswap' });
+    expect(state.eventShapes).toContain('Swap/9');
+    expect(state.eventShapes).not.toContain('Swap/7');
+  });
+
+  it('still runs exactly three log streams, not four', async () => {
+    // A fourth stream would be a third more getLogs on every EVM scan, and
+    // these endpoints already rate-limit.
+    await new EvmClient('bsc').replay(TOKEN, PAIR, { ...opts(), dexId: 'pancakeswap' });
+    const kinds = new Set(state.eventShapes);
+    expect(kinds).toEqual(new Set(['Transfer/3', 'Swap/6', 'Swap/9']));
   });
 });
