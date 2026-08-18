@@ -11,6 +11,7 @@ import {
   renderFloorEntries,
   renderProviderEntries,
   renderProvenWinners,
+  renderWinningPlay,
   renderDiamondHands,
   renderDevCluster,
   renderRelays,
@@ -75,6 +76,9 @@ async function main(): Promise<void> {
       banner('PROVEN WINNERS');
       console.log(toText(renderProvenWinners(report, 0)));
     }
+
+    banner('WINNING PLAY');
+    console.log(toText(renderWinningPlay(report)));
 
     if (report.providerEntries.length > 0) {
       banner('FIRST BUYERS');

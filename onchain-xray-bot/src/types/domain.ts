@@ -311,6 +311,12 @@ export interface AnalysisReport {
    */
   sideClusters: import('../engine/sideWallets.js').SideCluster[];
 
+  /**
+   * Which trading STYLE earned the most here, richest first. Answers "how",
+   * where every other screen answers "who".
+   */
+  winningPlays: import('../engine/winningPlay.js').PlayGroup[];
+
   /** Per-module warnings surfaced in the UI (missing key, partial data...). */
   warnings: string[];
 }

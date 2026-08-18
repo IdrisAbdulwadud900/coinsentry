@@ -4,6 +4,7 @@ import { LINK_LABEL } from '../../engine/devGraph.js';
 import { sortEarlyBuyers, minPositionUsd, type EntrySort } from '../../engine/entries.js';
 import { providerBucket } from '../../engine/providerEntries.js';
 import { computeVerdict } from '../../engine/verdict.js';
+import { PLAY_META } from '../../engine/winningPlay.js';
 import {
   esc,
   usd,
@@ -301,6 +302,58 @@ export function renderProvenWinners(report: AnalysisReport, page: number): strin
 
   const tail = info.page === info.pages - 1 ? clusterBlock(report) : '';
   return clampMessage(head + body + tail + footer(info, 'winners'));
+}
+
+// --- Winning play ------------------------------------------------------------
+
+/**
+ * What actually worked on this coin, by style.
+ *
+ * Ranked by combined profit rather than by how many wallets traded each way.
+ * The popular play and the profitable one are usually not the same, and on a
+ * coin where most buyers lost, counting wallets would recommend the losing one.
+ */
+export function renderWinningPlay(report: AnalysisReport): string {
+  const sym = report.token.symbol.trim().toUpperCase();
+
+  if (report.winningPlays.length === 0) {
+    return empty(
+      '🧠',
+      'WINNING PLAY',
+      report.token.createdAt
+        ? `No wallet cleared ${usd(config.PLAY_MIN_PROFIT_USD)} profit here, so there is no winning style to report.`
+        : 'The launch time for this coin is unknown, so entries cannot be measured against it.',
+    );
+  }
+
+  const top = report.winningPlays[0]!;
+  const total = report.winningPlays.reduce((sum, p) => sum + p.profitUsd, 0);
+
+  const body = report.winningPlays.map((p, i) => {
+    const meta = PLAY_META[p.kind];
+    const share = total > 0 ? (p.profitUsd / total) * 100 : 0;
+    return [
+      `${i === 0 ? '🥇' : `${i + 1}.`} ${meta.icon} <b>${meta.label}</b>`,
+      `   <code>${esc(`${usd(p.profitUsd)} across ${p.wallets} wallet${p.wallets > 1 ? 's' : ''}`)}</code> ${ICON.bullet} ${pct(share, 0)} of profit`,
+      `   <i>${esc(meta.blurb)}</i>`,
+      `   <i>typical ${mult(p.medianMultiple)}${p.medianHoldSeconds !== null ? ` ${ICON.bullet} ${p.kind.endsWith('hold') ? 'carried' : 'held'} ${duration(p.medianHoldSeconds)}` : ''}</i>`,
+      `   <i>best: <a href="${walletUrl(report.token.chain, p.bestWallet)}">${esc(shortAddr(p.bestWallet, 4, 4))}</a> ${usd(p.bestProfitUsd, { sign: true })}</i>`,
+    ].join('\n');
+  });
+
+  return clampMessage(
+    [
+      heading('🧠', 'WINNING PLAY', `$${sym}`),
+      '',
+      `<i>How the money was actually made here, ranked by profit — not by how many wallets did it.</i>`,
+      '',
+      `<b>${PLAY_META[top.kind].icon} ${esc(PLAY_META[top.kind].label)}</b> took the most out of this coin.`,
+      '',
+      body.join('\n\n'),
+      '',
+      `<blockquote><i>Only wallets up ${usd(config.PLAY_MIN_PROFIT_USD)}+ are counted, so this is what worked, not what was popular. Styles are inferred from entry timing and buy/sell counts.</i></blockquote>`,
+    ].join('\n'),
+  );
 }
 
 // --- Diamond hands -----------------------------------------------------------

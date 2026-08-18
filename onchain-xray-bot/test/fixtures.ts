@@ -164,6 +164,8 @@ export function makeReport(over: Partial<AnalysisReport> = {}): AnalysisReport {
     supplyRelays,
     smartMoney: {},
     provenWinners: [],
+    sideClusters: [],
+    winningPlays: [],
     winnersChecked: 0,
     warnings: [],
     ...over,

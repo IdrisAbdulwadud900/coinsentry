@@ -31,6 +31,7 @@ import { buildDevGraph } from './devGraph.js';
 import { buildProviderEntries, findProviderDiamondHands } from './providerEntries.js';
 import { rateFromTokenResults, type SmartMoney } from './smartMoney.js';
 import { buildWinner, rankWinners, qualifiesOnThisCoin, type ProvenWinner } from './provenWinners.js';
+import { rankPlays } from './winningPlay.js';
 import {
   extractFundingPeers,
   findSideWallets,
@@ -257,6 +258,11 @@ export async function analyzeToken(
   const diamondHands = findDiamondHands(ledgers, ctx);
   const providerDiamondHands = findProviderDiamondHands(providerEntries);
 
+  // Style comes from the first-buyer records, not the profit leaderboard: only
+  // that endpoint returns timestamps and buy/sell counts, and without them a
+  // wallet cannot be placed. Costs no extra request — it is already fetched.
+  const winningPlays = rankPlays(history.providerFirstBuyers, meta.createdAt);
+
   await onProgress({ stage: 'Tracing supply relays', pct: 0.9 });
   const supplyRelays = findSupplyRelays(history.supplyTransfers, ledgers, ctx, chain);
 
@@ -419,6 +425,7 @@ export async function analyzeToken(
     smartMoney,
     provenWinners,
     sideClusters,
+    winningPlays,
     winnersChecked,
     warnings,
   };

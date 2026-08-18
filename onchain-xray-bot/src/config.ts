@@ -171,6 +171,19 @@ const schema = z.object({
   /** Wall-clock ceiling for the whole track-record phase. */
   WINNER_PHASE_BUDGET_MS: num(45_000),
 
+  // --- Winning play -----------------------------------------------------------
+  /** Entered within this long of launch: a snipe. */
+  PLAY_SNIPE_SECONDS: num(300),
+  /** Entered within this long of launch: still early. */
+  PLAY_EARLY_SECONDS: num(3600),
+  /** Held for less than this before selling: a flip. */
+  PLAY_FLIP_SECONDS: num(1800),
+  /** Buys and sells that mark a position being scaled rather than shot. */
+  PLAY_SCALE_MIN_BUYS: num(3),
+  PLAY_SCALE_MIN_SELLS: num(3),
+  /** Wallets below this profit do not shape the answer to "what worked". */
+  PLAY_MIN_PROFIT_USD: num(300),
+
   // --- Side wallets ----------------------------------------------------------
   /** Top winners whose funding peers are checked. Each is one bounded lookup. */
   SIDE_WALLET_LOOKUPS: num(10),

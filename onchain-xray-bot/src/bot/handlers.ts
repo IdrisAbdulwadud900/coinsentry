@@ -8,6 +8,7 @@ import {
   renderFloorEntries,
   renderProviderEntries,
   renderProvenWinners,
+  renderWinningPlay,
   renderDiamondHands,
   renderDevCluster,
   renderRelays,
@@ -316,6 +317,11 @@ async function renderView(
       const kb = listKeyboard(id, 'first', info, {});
       await edit(renderProviderEntries(report, info.page), kb);
       return;
+    }
+
+    case 'play': {
+      await edit(renderWinningPlay(report), simpleBack(id));
+      break;
     }
 
     case 'winners': {

@@ -5,7 +5,7 @@ import { dexScreenerUrl } from '../util/format.js';
 import type { EntrySort } from '../engine/entries.js';
 import type { PageInfo } from './render/screens.js';
 
-export type View = 'home' | 'floor' | 'first' | 'winners' | 'diamond' | 'dev' | 'relay' | 'risk' | 'wallet' | 'copy' | 'track';
+export type View = 'home' | 'floor' | 'first' | 'winners' | 'play' | 'diamond' | 'dev' | 'relay' | 'risk' | 'wallet' | 'copy' | 'track';
 
 /**
  * Callback payloads are limited to 64 bytes, so everything is positional and
@@ -53,6 +53,11 @@ export function homeKeyboard(id: string, report: AnalysisReport): InlineKeyboard
   // Repeat winners answer the question people actually act on, so it leads.
   if (report.provenWinners.length > 0) {
     kb.text(`🏆 Proven winners · ${report.provenWinners.length}`, cb(id, 'winners')).row();
+  }
+  // "How" sits next to "who": the style that earned most is the part a reader
+  // can actually reuse on the next coin.
+  if (report.winningPlays.length > 0) {
+    kb.text('🧠 Winning play', cb(id, 'play')).row();
   }
 
   return kb
