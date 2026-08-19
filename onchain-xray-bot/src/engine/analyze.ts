@@ -802,13 +802,36 @@ async function loadEvmHistory(
 
   // The deployer minted the supply before the pair existed, so it never appears
   // in the replayed logs — it has to be resolved from the contract itself.
+  //
+  // Three sources, cheapest first, because no single one covers every case.
+  // Blockscout answers in one request but has no BNB Chain instance at all and
+  // returns nothing for factory-deployed tokens even on Base. The mint is
+  // usually already in hand — memecoins routinely deploy and open their pool in
+  // the same block — and costs one lookup. Bisecting eth_getCode always works
+  // but needs an archive node and ~25 requests, so it goes last.
   if (!meta.dev) {
     meta.dev = await getContractCreator(meta.chain, meta.address);
-    if (!meta.dev && meta.chain === 'bsc') {
-      warnings.push(
-        'No public explorer API covers BNB Chain deployers, so the dev cluster is unavailable here.',
-      );
+  }
+
+  if (!meta.dev && res.mintTxHash) {
+    meta.dev = await evm.txSender(res.mintTxHash);
+  }
+
+  if (!meta.dev) {
+    const head = await evm.headBlock().catch(() => null);
+    const block = head ? await evm.deploymentBlock(meta.address, head) : null;
+    if (block !== null) {
+      const mint = await evm.mintTxAt(meta.address, block);
+      if (mint) meta.dev = await evm.txSender(mint);
     }
+  }
+
+  if (!meta.dev) {
+    warnings.push(
+      meta.chain === 'bsc'
+        ? 'No public explorer API covers BNB Chain deployers, and its public RPCs reject the historical queries that would find one, so the dev cluster is unavailable here.'
+        : 'The deployer could not be resolved from the explorer, the mint, or the contract history, so the dev cluster is unavailable.',
+    );
   }
 
   return {
