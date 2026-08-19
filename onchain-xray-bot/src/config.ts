@@ -171,6 +171,12 @@ const schema = z.object({
   /** Wall-clock ceiling for the whole track-record phase. */
   WINNER_PHASE_BUDGET_MS: num(45_000),
 
+  /**
+   * V4 pools read together. A topic filter listing every pool silently
+   * under-returns on public endpoints, so this reads the deepest few.
+   */
+  EVM_V4_MAX_POOLS: num(8),
+
   // --- Winning play -----------------------------------------------------------
   /** Entered within this long of launch: a snipe. */
   PLAY_SNIPE_SECONDS: num(300),

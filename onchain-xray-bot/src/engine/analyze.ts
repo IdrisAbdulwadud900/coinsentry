@@ -13,7 +13,7 @@ import type {
 } from '../types/domain.js';
 import { detectAddressKind, normalizeAddress, CHAINS, logChunkFor } from '../data/chains.js';
 import { lookupToken } from '../data/dexscreener.js';
-import { v4PoolIdsOf } from '../data/evmPair.js';
+import { v4PoolsOf } from '../data/evmPair.js';
 import { getToken as getJupToken } from '../data/jupiter.js';
 import { HeliusClient } from '../data/helius.js';
 import { SolanaTrackerClient, type FirstBuyer } from '../data/solanatracker.js';
@@ -124,7 +124,7 @@ export async function analyzeToken(
           ds.best.quoteToken,
           warnings,
           onProgress,
-          v4PoolIdsOf(ds.all, ds.best.quoteToken),
+          v4PoolsOf(ds.all),
         );
 
   if (!providerOnly && history.trades.length === 0) {
@@ -697,11 +697,11 @@ async function loadEvmHistory(
   warnings: string[],
   onProgress: ProgressFn,
   /**
-   * Every V4 poolId this token trades in. A token routinely has several, and
-   * they all settle through the same PoolManager, so reading only the chosen
-   * one would leave the rest's transfers with no price attached.
+   * Every V4 pool this token trades in, deepest first, each with its own quote
+   * currency. They all settle through the same PoolManager, so reading only the
+   * chosen one would leave the rest's transfers with no price attached.
    */
-  v4PoolIds: string[] = [],
+  v4Pools: { id: string; quoteToken: string }[] = [],
 ): Promise<History> {
   if (!meta.pairAddress) {
     throw new AnalysisError('No pair address available for this token.');
@@ -743,7 +743,7 @@ async function loadEvmHistory(
       nativePriceAt: (ts) => oracle.at(ts),
       quoteToken,
       dexId: meta.dexId ?? undefined,
-      v4PoolIds,
+      v4Pools,
     },
     (pct, detail) => {
       void onProgress({ stage: 'Replaying pair logs', detail, pct: 0.15 + pct * 0.5 });

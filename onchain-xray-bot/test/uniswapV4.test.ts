@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isV4PoolId, v4PoolIdsOf, hasV4Support, resolveV4TokenSide } from '../src/data/evmPair.js';
+import { isV4PoolId, v4PoolsOf, hasV4Support, resolveV4TokenSide } from '../src/data/evmPair.js';
 
 const POOL_ID = '0x' + 'a'.repeat(64);
 const ADDRESS = '0x' + 'b'.repeat(40);
@@ -12,27 +12,26 @@ describe('V4 pool identification', () => {
     expect(isV4PoolId(ADDRESS)).toBe(false);
   });
 
-  it('collects V4 ids sharing the chosen pool\'s quote currency', () => {
+  it('keeps each V4 pool with its own quote currency, in depth order', () => {
+    // The currency has to travel with the pool: one token's deepest pool is in
+    // ETH and fifteen more are in USDC, and valuing them through one divisor
+    // understated the USDC side a trillion-fold.
     const ETH = '0x0000000000000000000000000000000000000000';
     const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
-    const pools = [
+    const usdcPool = '0x' + 'c'.repeat(64);
+    const out = v4PoolsOf([
       { pairAddress: ADDRESS, quoteToken: ETH },
       { pairAddress: POOL_ID, quoteToken: ETH },
-      { pairAddress: POOL_ID, quoteToken: ETH },
-      { pairAddress: '0x' + 'c'.repeat(64), quoteToken: USDC },
-    ];
-    expect(v4PoolIdsOf(pools, ETH)).toEqual([POOL_ID]);
+      { pairAddress: usdcPool, quoteToken: USDC },
+    ]);
+    expect(out).toEqual([
+      { id: POOL_ID, quoteToken: ETH },
+      { id: usdcPool, quoteToken: USDC },
+    ]);
   });
 
-  it('never folds a USDC pool into an ETH series', () => {
-    // One token had its deepest pool in ETH and fifteen more in USDC. Mixing
-    // them divided USDC amounts by 1e18 instead of 1e6 — a trillion-fold
-    // understatement that dragged the floor market cap to $0.0005.
-    const ETH = '0x0000000000000000000000000000000000000000';
-    const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
-    const usdcPool = '0x' + 'd'.repeat(64);
-    expect(v4PoolIdsOf([{ pairAddress: usdcPool, quoteToken: USDC }], ETH)).toEqual([]);
-    expect(v4PoolIdsOf([{ pairAddress: usdcPool, quoteToken: USDC }], USDC)).toEqual([usdcPool]);
+  it('drops non-V4 pools, which have their own contracts to read', () => {
+    expect(v4PoolsOf([{ pairAddress: ADDRESS, quoteToken: '0x0' }])).toEqual([]);
   });
 
   it('knows which chains have a PoolManager', () => {
