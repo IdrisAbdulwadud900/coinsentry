@@ -269,3 +269,21 @@ describe('V3 swap variant follows the pool\'s DEX', () => {
     expect(kinds).toEqual(new Set(['Transfer/3', 'Swap/6', 'Swap/9']));
   });
 });
+
+describe('trades come back in time order', () => {
+  it('sorts even when later blocks are read first', async () => {
+    // The retry pass appends recovered chunks after the rest, and everything
+    // downstream assumes ascending time — PriceCurve binary-searches on it.
+    state.transfers = [
+      { from: PAIR, to: ALICE, value: 10n ** 18n, tx: '0xb', block: 90n },
+      { from: PAIR, to: ALICE, value: 10n ** 18n, tx: '0xa', block: 10n },
+    ];
+    state.swapsV2 = [
+      { quoteIn: 10n ** 16n, quoteOut: 0n, tx: '0xb', block: 90n },
+      { quoteIn: 10n ** 16n, quoteOut: 0n, tx: '0xa', block: 10n },
+    ];
+    const res = await new EvmClient('base').replay(TOKEN, PAIR, opts());
+    const times = res.trades.map((t) => t.ts);
+    expect(times).toEqual([...times].sort((a, b) => a - b));
+  });
+});

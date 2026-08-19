@@ -769,6 +769,15 @@ async function loadEvmHistory(
       `Log scanning hit its ${Math.round(config.EVM_SCAN_BUDGET_MS / 1000)}s time budget, so coverage is thinner than the windows above describe.`,
     );
   }
+  // A partial read still yields a report, so the hole has to be stated. Every
+  // figure drawn from the missing ranges is absent rather than zero, and the
+  // difference is invisible on screen.
+  if (res.lostChunks > 0 && res.totalChunks > 0) {
+    warnings.push(
+      `The ${CHAINS[meta.chain].label} RPC could not read ${Math.round((res.lostChunks / res.totalChunks) * 100)}% of this token's block range, even after splitting and retrying. Wallets and trades in that stretch are missing, not absent — re-scan, or set a keyed RPC, for a fuller picture.`,
+    );
+  }
+
   if (res.totalSupply > 0) meta.totalSupply = res.totalSupply;
 
   // The deployer minted the supply before the pair existed, so it never appears

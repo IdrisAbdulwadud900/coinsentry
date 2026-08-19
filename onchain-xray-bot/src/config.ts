@@ -176,6 +176,16 @@ const schema = z.object({
    * under-returns on public endpoints, so this reads the deepest few.
    */
   EVM_V4_MAX_POOLS: num(8),
+  /** Pause before retrying log chunks that failed, so a rate limit can clear. */
+  EVM_LOG_RETRY_DELAY_MS: num(1_500),
+  /** Attempts to recover a failed log chunk before giving up on it. */
+  EVM_LOG_RETRIES: num(3),
+  /**
+   * Share of transfer chunks that may be lost before a scan is refused. A
+   * partly-read history looks like a successful scan but every figure in it is
+   * wrong, which is worse than an error.
+   */
+  EVM_MAX_LOG_LOSS: num(0.25),
 
   // --- Winning play -----------------------------------------------------------
   /** Entered within this long of launch: a snipe. */

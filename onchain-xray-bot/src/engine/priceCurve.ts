@@ -35,9 +35,22 @@ export class PriceCurve {
     // — so the reported floor came out above market caps that wallets had
     // demonstrably bought at, and their entries appeared to predate the floor.
     // Solana packs many trades into one second, so this was not an edge case.
-    for (const t of trades) {
-      if (!Number.isFinite(t.priceUsd) || t.priceUsd <= 0) continue;
-      if (!Number.isFinite(t.mcap) || t.mcap <= 0) continue;
+    //
+    // Sorted here rather than trusted from the caller. Everything below assumes
+    // ascending time — `first` reads index 0, and `peak` binary-searches `ts`
+    // for the window — so a single out-of-order trade does not degrade the
+    // answer, it corrupts it silently. That happened for real: retried log
+    // chunks were appended after the rest, which put recent trades before the
+    // launch and reported a two-day-old coin as thirteen hours old with no
+    // diamond hands at all.
+    const usable = trades
+      .filter(
+        (t) =>
+          Number.isFinite(t.priceUsd) && t.priceUsd > 0 && Number.isFinite(t.mcap) && t.mcap > 0,
+      )
+      .sort((a, b) => a.ts - b.ts);
+
+    for (const t of usable) {
       this.ts.push(t.ts);
       this.price.push(t.priceUsd);
       this.mcap.push(t.mcap);
