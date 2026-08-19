@@ -93,6 +93,12 @@ export interface WalletLedger {
   avgBuyMcap: number;
 
   totalBoughtTokens: number;
+  /**
+   * Largest position ever held at one time. Distinct from `totalBoughtTokens`,
+   * which is cumulative and can exceed the entire supply for a wallet that
+   * trades in and out repeatedly.
+   */
+  peakTokens: number;
   totalSoldTokens: number;
   totalBoughtUsd: number;
   totalSoldUsd: number;

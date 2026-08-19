@@ -484,7 +484,7 @@ function renderLinkedWallet(report: AnalysisReport, l: LinkedWallet, index: numb
   ];
 
   if (l.ledger && l.ledger.buyCount > 0) {
-    const supplyPct = report.token.totalSupply > 0 ? (l.ledger.totalBoughtTokens / report.token.totalSupply) * 100 : 0;
+    const supplyPct = report.token.totalSupply > 0 ? (l.ledger.peakTokens / report.token.totalSupply) * 100 : 0;
     lines.push(
       `   entry ${usd(l.ledger.entryMcap)} ${ICON.bullet} ${pct(supplyPct, 2)} supply ${ICON.bullet} ${positionBadge(l.ledger)}`,
     );
@@ -552,7 +552,7 @@ function renderRelay(report: AnalysisReport, r: SupplyRelay, index: number): str
 export function renderWallet(report: AnalysisReport, ledger: WalletLedger): string {
   const chain = report.token.chain;
   const supply = report.token.totalSupply;
-  const supplyPct = supply > 0 ? (ledger.totalBoughtTokens / supply) * 100 : 0;
+  const supplyPct = supply > 0 ? (ledger.peakTokens / supply) * 100 : 0;
   const holdPct = supply > 0 ? (ledger.balanceTokens / supply) * 100 : 0;
   const sym = report.token.symbol.trim().toUpperCase();
 
@@ -562,7 +562,7 @@ export function renderWallet(report: AnalysisReport, ledger: WalletLedger): stri
     quote(
       [
         `<b>Entry</b>  ${usd(ledger.entryMcap)} market cap`,
-        `<b>Bought</b> ${usd(ledger.totalBoughtUsd)} ${ICON.bullet} ${pct(supplyPct, 2)} of supply`,
+        `<b>Bought</b> ${usd(ledger.totalBoughtUsd)} ${ICON.bullet} peak ${pct(supplyPct, 2)} of supply`,
         `<b>Sold</b>   ${usd(ledger.totalSoldUsd)}`,
         `<b>Holds</b>  ${compact(ledger.balanceTokens)} ${esc(sym)} ${ICON.bullet} ${pct(holdPct, 2)}`,
       ].join('\n'),

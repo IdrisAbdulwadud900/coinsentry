@@ -21,6 +21,7 @@ export function makeLedger(over: Partial<WalletLedger> = {}): WalletLedger {
     entryPriceUsd: 0.000003,
     avgBuyPriceUsd: 0.000003,
     avgBuyMcap: 3_000,
+    peakTokens: 10_000_000,
     totalBoughtTokens: 10_000_000,
     totalSoldTokens: 0,
     totalBoughtUsd: 30,

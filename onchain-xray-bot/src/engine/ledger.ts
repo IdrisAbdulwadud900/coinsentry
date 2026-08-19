@@ -50,8 +50,18 @@ export function buildLedgers(
     let firstBuyPrice = 0;
     let firstBuyMcap = 0;
     let firstSellTs: number | null = null;
+    // Largest position the wallet ever held, tracked as it goes rather than
+    // inferred at the end. Cumulative buys are not a position: a wallet that
+    // churns in and out all day can buy several times the supply without ever
+    // holding much of it, which is how one arb bot was credited with "170.51%
+    // supply". This answers the question the label actually asks.
+    let runningTokens = 0;
+    let peakTokens = 0;
 
     for (const t of walletTrades) {
+      runningTokens += t.side === 'buy' ? t.tokenAmount : -t.tokenAmount;
+      if (runningTokens > peakTokens) peakTokens = runningTokens;
+
       if (t.side === 'buy') {
         if (buyCount === 0) {
           firstBuyTs = t.ts;
@@ -118,6 +128,11 @@ export function buildLedgers(
       avgBuyPriceUsd: avgBuyPrice,
       avgBuyMcap: firstBuyMcap > 0 && firstBuyPrice > 0 ? (avgBuyPrice / firstBuyPrice) * firstBuyMcap : 0,
       totalBoughtTokens: boughtTokens,
+      // Floored at the current balance: whatever a wallet holds now, it held at
+      // some point, and that covers tokens that arrived by transfer rather than
+      // through a trade. Never derived from cumulative buys, which is the whole
+      // point — that figure double-counts every round trip.
+      peakTokens: Math.max(peakTokens, balance),
       totalSoldTokens: soldTokens,
       totalBoughtUsd: boughtUsd,
       totalSoldUsd: soldUsd,

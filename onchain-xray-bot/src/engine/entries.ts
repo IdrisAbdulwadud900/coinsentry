@@ -124,7 +124,7 @@ export function findEarlyBuyers(
       tier,
       entryRank: rankOf.get(ledger.wallet) ?? 0,
       secondsAfterLaunch: Math.max(0, ledger.firstBuyTs - ctx.firstTradeTs),
-      supplyPct: ctx.totalSupply > 0 ? (ledger.totalBoughtTokens / ctx.totalSupply) * 100 : 0,
+      supplyPct: ctx.totalSupply > 0 ? (ledger.peakTokens / ctx.totalSupply) * 100 : 0,
     });
   }
 
@@ -204,7 +204,7 @@ export function findDiamondHands(
       ledger,
       bucket,
       entryTier: tier,
-      supplyPct: ctx.totalSupply > 0 ? (ledger.totalBoughtTokens / ctx.totalSupply) * 100 : 0,
+      supplyPct: ctx.totalSupply > 0 ? (ledger.peakTokens / ctx.totalSupply) * 100 : 0,
     });
   }
 

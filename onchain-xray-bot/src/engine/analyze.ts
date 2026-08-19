@@ -201,6 +201,7 @@ export async function analyzeToken(
 
   const currentPrice = meta.priceUsd > 0 ? meta.priceUsd : (curve.last?.price ?? 0);
   const currentMcap = meta.mcap > 0 ? meta.mcap : currentPrice * meta.totalSupply;
+  let passthroughAddresses = 0;
   const ledgers = buildLedgers(
     history.trades,
     history.supplyTransfers,
@@ -208,6 +209,25 @@ export async function analyzeToken(
     currentPrice,
     currentMcap,
   );
+
+  // Drop addresses that cannot be holders.
+  //
+  // No wallet can ever hold more of a token than exists, so a position above
+  // 100% of supply is proof the address is something tokens pass THROUGH — an
+  // aggregator or router that never owned them. One such address was ranked as
+  // the second-best floor entry on a coin, credited with 153% of the supply and
+  // a 91x return, because every trader's volume routed through it.
+  //
+  // This is a property check rather than an address list, so it catches routers
+  // nobody has catalogued yet — which is most of them on a new chain.
+  if (meta.totalSupply > 0) {
+    for (const [wallet, l] of ledgers) {
+      if (l.peakTokens > meta.totalSupply * 1.001) {
+        ledgers.delete(wallet);
+        passthroughAddresses++;
+      }
+    }
+  }
 
   // Every tier, the floor band and all market-cap figures are derived from
   // supply. Without it they silently collapse to zero and the report renders

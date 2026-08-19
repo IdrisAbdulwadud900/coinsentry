@@ -554,3 +554,58 @@ describe('entry band rebases when the floor was a sell', () => {
     expect(wallets).not.toContain('late');
   });
 });
+
+describe('supply share reflects the position held, not cumulative buying', () => {
+  const W = 'churner';
+  const t = (side: 'buy' | 'sell', tokenAmount: number, ts: number) =>
+    trade({ ts, wallet: W, side, tokenAmount, priceUsd: 0.000002 });
+  const curve = new PriceCurve([t('buy', 1000, 1)]);
+
+  it('never counts the same tokens twice for a wallet that churns', () => {
+    // An arb bot cycling 400 tokens four times bought 1,600 but never held more
+    // than 400. Reporting the cumulative figure as "% supply" is how a wallet
+    // came to be credited with 170.51% of a coin.
+    const trades = [];
+    for (let i = 0; i < 4; i++) {
+      trades.push(t('buy', 400, i * 10 + 1), t('sell', 400, i * 10 + 2));
+    }
+    const l = buildLedgers(trades, [], curve, 0.000002).get(W)!;
+    expect(l.totalBoughtTokens).toBe(1600);
+    expect(l.peakTokens).toBe(400);
+  });
+
+  it('measures the largest position, not the last one', () => {
+    const l = buildLedgers([t('buy', 900, 1), t('sell', 800, 2), t('buy', 50, 3)], [], curve, 0.000002).get(W)!;
+    expect(l.peakTokens).toBe(900);
+  });
+
+  it('matches total bought when a wallet only accumulates', () => {
+    const l = buildLedgers([t('buy', 300, 1), t('buy', 200, 2)], [], curve, 0.000002).get(W)!;
+    expect(l.peakTokens).toBe(500);
+  });
+});
+
+describe('addresses that cannot be holders', () => {
+  const W = 'router';
+  const t = (side: 'buy' | 'sell', tokenAmount: number, ts: number) =>
+    trade({ ts, wallet: W, side, tokenAmount, priceUsd: 0.000002 });
+  const curve = new PriceCurve([t('buy', 1000, 1)]);
+
+  it('a router accumulates a position larger than the supply exists', () => {
+    // Nobody can hold more of a token than exists, so this is the signal that
+    // an address is something tokens pass THROUGH. One such router was ranked
+    // the second-best floor entry on a coin at 153% of supply and 91x, because
+    // every trader's volume routed through it. Checking the property rather
+    // than a list catches the routers nobody has catalogued yet.
+    const trades = [];
+    for (let i = 0; i < 5; i++) trades.push(t('buy', SUPPLY / 2, i * 10 + 1));
+    const l = buildLedgers(trades, [], curve, 0.000002).get(W)!;
+    expect(l.peakTokens).toBeGreaterThan(SUPPLY);
+  });
+
+  it('leaves a wallet holding almost all of the supply alone', () => {
+    // A dev holding 99% is unusual, not impossible — the test is strictly ">".
+    const l = buildLedgers([t('buy', SUPPLY * 0.99, 1)], [], curve, 0.000002).get(W)!;
+    expect(l.peakTokens).toBeLessThan(SUPPLY);
+  });
+});
