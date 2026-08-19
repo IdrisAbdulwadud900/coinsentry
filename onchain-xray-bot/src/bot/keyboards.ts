@@ -46,7 +46,11 @@ export function homeKeyboard(id: string, report: AnalysisReport): InlineKeyboard
 
   // When the replay never reached launch, the provider's first-buyer list is
   // the real answer to "who was early" — surface it in place of the thin one.
-  const useProvider = !report.reachedLaunch && report.providerEntries.length > 0;
+  // Same test the overview uses, so the button and the summary can never
+  // disagree about which list exists.
+  const useProvider =
+    report.providerEntries.length > 0 &&
+    (report.floorEntries.length === 0 || !report.reachedLaunch);
 
   const kb = new InlineKeyboard();
 

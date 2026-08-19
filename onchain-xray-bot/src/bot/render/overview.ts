@@ -86,7 +86,15 @@ export function renderOverview(report: AnalysisReport): string {
   // On a token too busy to replay, the provider records ARE the finding. The
   // summary must count what the buttons will actually open, or the card
   // reports zero next to a button offering 82 wallets.
-  const useProviderEntries = !report.reachedLaunch && report.providerEntries.length > 0;
+  // Two separate reasons to prefer the provider's list, and both are needed.
+  // A replay that fell short of the launch has an unreliable floor even when it
+  // found something; and the fast path replays nothing at all while still
+  // reporting reachedLaunch, which showed "Floor entries 0" on a coin whose
+  // provider records held 82 first buyers — the exact "reports zero next to a
+  // button offering 82 wallets" failure this was meant to prevent.
+  const useProviderEntries =
+    report.providerEntries.length > 0 &&
+    (report.floorEntries.length === 0 || !report.reachedLaunch);
   const useProviderDiamond =
     report.diamondHands.length === 0 && report.providerDiamondHands.length > 0;
 
@@ -133,11 +141,22 @@ export function renderOverview(report: AnalysisReport): string {
   }
 
   // --- Coverage -------------------------------------------------------------
-  const coverage = [
-    `${count(report.tradeCount)} trades`,
-    `${count(report.uniqueWallets)} wallets`,
-    report.firstTradeTs ? `first trade ${ago(report.firstTradeTs)}` : null,
-  ]
+  // The fast path replays nothing, so its trade and wallet counts are
+  // legitimately zero — but "0 trades · 0 wallets" reads as "found nothing" on
+  // a report that just named seven proven-profitable wallets. State what was
+  // actually read instead.
+  const replayed = report.tradeCount > 0 || report.uniqueWallets > 0;
+  const coverage = (
+    replayed
+      ? [`${count(report.tradeCount)} trades`, `${count(report.uniqueWallets)} wallets`]
+      : [
+          report.providerEntries.length > 0
+            ? `${count(report.providerEntries.length)} first buyers read`
+            : null,
+          'no transaction replay',
+        ]
+  )
+    .concat(report.firstTradeTs ? `first trade ${ago(report.firstTradeTs)}` : null)
     .filter(Boolean)
     .join(` ${ICON.bullet} `);
   lines.push(`<i>${esc(coverage)}</i>`);

@@ -3,6 +3,7 @@ import { makeReport, makeProviderEntry, makeLedger } from './fixtures.js';
 import { cb, parseCb, homeKeyboard, listKeyboard, walletKeyboard } from '../src/bot/keyboards.js';
 import { createSession, getSession } from '../src/bot/session.js';
 import { computeVerdict } from '../src/engine/verdict.js';
+import { renderOverview } from '../src/bot/render/overview.js';
 
 describe('callback payloads', () => {
   it('round-trips every field', () => {
@@ -134,5 +135,37 @@ describe('verdict', () => {
     const v = computeVerdict(makeReport());
     const expected = v.risk >= 70 ? 'HOSTILE' : v.risk >= 45 ? 'ELEVATED' : v.risk >= 22 ? 'WATCH' : 'CLEAN';
     expect(v.band).toBe(expected);
+  });
+});
+
+describe('the fast path must not report zero', () => {
+  it('shows the provider list when nothing was replayed at all', () => {
+    // The Solana fast path replays no transactions yet sets reachedLaunch, so
+    // keying off that alone printed "Floor entries 0" next to a button
+    // offering 82 wallets.
+    const report = makeReport({
+      reachedLaunch: true,
+      floorEntries: [],
+      tradeCount: 0,
+      uniqueWallets: 0,
+      providerEntries: [makeProviderEntry(), makeProviderEntry()],
+    });
+    const labels = homeKeyboard('s1', report).inline_keyboard.flat().map((b) => b.text);
+    expect(labels.some((l) => l.includes('First buyers'))).toBe(true);
+    expect(renderOverview(report)).toContain('First buyers');
+  });
+
+  it('never prints "0 trades" when there was no replay to count', () => {
+    const html = renderOverview(
+      makeReport({ tradeCount: 0, uniqueWallets: 0, floorEntries: [], providerEntries: [makeProviderEntry()] }),
+    );
+    expect(html).not.toContain('0 trades');
+    expect(html).toContain('no transaction replay');
+  });
+
+  it('still reports replay counts when there was a replay', () => {
+    const html = renderOverview(makeReport({ tradeCount: 1_500, uniqueWallets: 400 }));
+    expect(html).toContain('trades');
+    expect(html).not.toContain('no transaction replay');
   });
 });
