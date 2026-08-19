@@ -80,12 +80,27 @@ export function meter(score: number, width = 10): string {
 export function positionBadge(l: WalletLedger): string {
   if (l.stillHolding && l.sellCount === 0) return '💎 HOLDING';
   if (l.stillHolding) return '🤝 PARTIAL';
+  // A wallet that never sold but has nothing left did not exit the market — it
+  // handed the position to another address. Calling that "EXITED · $0" reads as
+  // "made nothing", when it is usually the opposite: the tokens left to be sold
+  // somewhere this ledger cannot see. It is also the exact pattern the supply
+  // relay screen exists to catch, so the two must not contradict each other.
+  if (l.fullyExited && l.sellCount === 0 && l.sentTokens > 0) return '📤 SENT OUT';
   if (l.fullyExited) return '🚪 EXITED';
   return '· FLAT';
 }
 
-/** PnL with directional colour cues that survive Telegram's plain styling. */
-export function pnl(value: number): string {
+/**
+ * PnL with directional colour cues that survive Telegram's plain styling.
+ *
+ * `moved` marks a wallet whose tokens left by transfer rather than by sale.
+ * Its realised PnL really is zero, but printing a bare $0 states that it made
+ * nothing, which is the opposite of what usually happened.
+ */
+export function pnl(value: number, opts: { moved?: boolean } = {}): string {
+  if (opts.moved && (!Number.isFinite(value) || value === 0)) {
+    return '<code>no sale on this wallet</code>';
+  }
   if (!Number.isFinite(value) || value === 0) return '<code>$0</code>';
   const sign = value > 0 ? '🟩' : '🟥';
   return `${sign} <b>${usd(value, { sign: true })}</b>`;
@@ -125,7 +140,7 @@ export function walletRow(
   const lines = [
     `${rank} ${addr}${badge}`,
     `   <code>${esc(parts.join(' · '))}</code>`,
-    `   ${pnl(ledger.totalPnlUsd)} ${ICON.bullet} ${positionBadge(ledger)}`,
+    `   ${pnl(ledger.totalPnlUsd, { moved: ledger.sellCount === 0 && ledger.sentTokens > 0 })} ${ICON.bullet} ${positionBadge(ledger)}`,
   ];
   if (opts.note) lines.push(`   <i>${esc(opts.note)}</i>`);
   return lines.join('\n');
@@ -166,7 +181,13 @@ export function walletFooter(chain: Chain, wallet: string): string {
 
 /** Human summary of how long a wallet held before its first sell. */
 export function holdSummary(l: WalletLedger): string {
-  if (l.sellCount === 0) return l.stillHolding ? 'never sold' : 'no sells recorded';
+  if (l.sellCount === 0) {
+    if (l.stillHolding) return 'never sold';
+    // "no sells recorded" on an empty wallet invites the reader to assume the
+    // data is missing. It is not: the tokens were moved, and where they went is
+    // on the supply-relay screen.
+    return l.sentTokens > 0 ? 'never sold — moved the position out' : 'no sells recorded';
+  }
   return `held ${duration(l.holdSeconds ?? 0)} before first sell`;
 }
 

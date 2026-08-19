@@ -193,3 +193,36 @@ describe('callback payloads fit Telegram\'s 64-byte limit', () => {
     }
   });
 });
+
+describe('a wallet that moved its position out is not reported as flat', () => {
+  it('says SENT OUT rather than EXITED, and never a bare $0', async () => {
+    // These wallets rode 233x and then transferred everything. Realised PnL is
+    // genuinely zero, but "$0 · EXITED · no sells recorded" reads as "made
+    // nothing" — the opposite of what happened, and it contradicts the supply
+    // relay screen, which exists to show exactly this pattern.
+    const { positionBadge, pnl, holdSummary } = await import('../src/bot/ui.js');
+    const moved = makeLedger({
+      sellCount: 0,
+      sentTokens: 5_000_000,
+      balanceTokens: 0,
+      stillHolding: false,
+      fullyExited: true,
+      totalPnlUsd: 0,
+    });
+    expect(positionBadge(moved)).toBe('📤 SENT OUT');
+    expect(pnl(0, { moved: true })).not.toContain('$0');
+    expect(holdSummary(moved)).toContain('moved the position out');
+  });
+
+  it('still says EXITED for a wallet that genuinely sold', async () => {
+    const { positionBadge } = await import('../src/bot/ui.js');
+    const sold = makeLedger({
+      sellCount: 4,
+      sentTokens: 0,
+      balanceTokens: 0,
+      stillHolding: false,
+      fullyExited: true,
+    });
+    expect(positionBadge(sold)).toBe('🚪 EXITED');
+  });
+});
