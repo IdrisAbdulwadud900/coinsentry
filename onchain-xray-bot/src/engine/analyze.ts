@@ -92,6 +92,17 @@ export async function analyzeToken(
     );
   }
 
+  // The zero address is not a token, but DexScreener answers for it with 30
+  // real pools, because Uniswap V4 uses address(0) to mean native ETH. Without
+  // this the bot started a 412-chunk Ethereum replay of an "asset" that has no
+  // supply, no Transfer events and no deployer.
+  if (/^0x0{40}$/i.test(address)) {
+    throw new AnalysisError(
+      'That is the zero address, not a token.',
+      'Uniswap V4 uses it to mean native ETH, so it shows up with real pools — but there is nothing to analyse. Send a token contract instead.',
+    );
+  }
+
   await onProgress({ stage: 'Resolving token', pct: 0.03 });
 
   const ds = await lookupToken(address);
