@@ -12,6 +12,40 @@ import type { CandleIndex } from '../data/ohlcv.js';
  * `peak` is answered in O(1) with a sparse table, because it runs once per
  * wallet and a token can have tens of thousands of them.
  */
+/**
+ * How far a reconstructed print may exceed the candle high before it is treated
+ * as an artifact rather than a price.
+ *
+ * Pools stay arbitraged within a few percent of each other, so a reconstruction
+ * that claims a price far above what the indexed pool ever printed is not a
+ * trade nobody indexed — it is a bad reconstruction. A margin is still needed
+ * because the replay reads several pools while the candles cover one, and
+ * because candle granularity is coarser than a single swap.
+ */
+const CANDLE_PEAK_TOLERANCE = 1.25;
+
+/**
+ * Reconciles the highest price the trades saw with the highest the candles saw.
+ *
+ * Taking the larger of the two was wrong in one direction: a peak is a MAXIMUM,
+ * so it is decided by the single most extreme print, and one bad reconstruction
+ * sets it however sound every other trade is. On one Base token a lone sell of
+ * 681 tokens for $23 implied a $33.9M market cap while the real top was
+ * $20.4M — a 66% overstatement that also credited a wallet with riding 5325x
+ * instead of about 3200x.
+ *
+ * The outlier filter cannot catch this and should not be asked to: that print
+ * sat only 1.8x above its neighbours, far inside the 10x tolerance that
+ * protects genuine launch ramps. Candles are the better authority here because
+ * they are aggregated independently and cannot contain our reconstruction's
+ * mistakes.
+ */
+export function reconcilePeak(fromTrades: number, fromCandles: number): number {
+  if (fromCandles <= 0) return fromTrades;
+  if (fromTrades > fromCandles * CANDLE_PEAK_TOLERANCE) return fromCandles;
+  return Math.max(fromTrades, fromCandles);
+}
+
 export class PriceCurve {
   private readonly ts: number[] = [];
   private readonly price: number[] = [];
@@ -114,7 +148,7 @@ export class PriceCurve {
   get peakMcap(): number {
     const fromTrades = this.peakIndex(0, this.mcap.length - 1);
     const fromCandles = this.candles ? this.candles.high * this.supply : 0;
-    return Math.max(fromTrades, fromCandles);
+    return reconcilePeak(fromTrades, fromCandles);
   }
 
   /** Index of the last sample at or before `t`. */
@@ -178,9 +212,7 @@ export class PriceCurve {
     const hi = this.indexAt(toTs);
     const fromTrades = lo >= this.ts.length || hi < lo ? 0 : this.peakIndex(lo, hi);
 
-    // Whichever source saw higher is right: both report prices that actually
-    // traded, and the replay simply may not have covered the moment.
-    return Math.max(fromTrades, fromCandles);
+    return reconcilePeak(fromTrades, fromCandles);
   }
 
   private peakIndex(lo: number, hi: number): number {
