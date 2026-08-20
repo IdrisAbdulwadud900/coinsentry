@@ -210,8 +210,14 @@ export async function analyzeToken(
         'Candle history for this pair described a different asset than the token and was discarded, so hold-through-the-run figures cover only the replayed window.',
       );
     } else {
+      // When the replay also fell short, candles were the only thing that knew
+      // about the unread stretch — so the peak stops being a measurement and
+      // becomes a lower bound. One token reported $44M this way while its
+      // candles, on the next attempt, showed $73.6M.
       warnings.push(
-        'Candle history was unavailable for this pair, so hold-through-the-run figures cover only the replayed window.',
+        history.truncated
+          ? 'Candle history was unavailable for this pair AND the replay could not cover the whole chain, so the peak market cap below is a lower bound rather than the true high — every figure measured against it understates how far the coin ran.'
+          : 'Candle history was unavailable for this pair, so hold-through-the-run figures cover only the replayed window.',
       );
     }
   }
