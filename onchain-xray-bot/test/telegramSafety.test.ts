@@ -248,3 +248,66 @@ describe('"none found" and "could not look" are different answers', () => {
     expect(renderOverview(makeReport({ supplyRelays: [], reachedLaunch: true }))).toContain('none');
   });
 });
+
+
+describe('alerts are valid Telegram HTML too', () => {
+  // Alerts are the one message the user never asked for and cannot retry. If
+  // Telegram rejects one, the tracked-wallet buy they were waiting for simply
+  // never arrives, with nothing on screen to show it went wrong.
+  const alert = (over: Record<string, unknown> = {}) => ({
+    wallet: '7Mwof5tBvNPC6e1zwtHRQynqXcuDpqqbeY9vSZLW2Bv8',
+    mint: 'J8PSdNP3QewKq2Z1JJJFDMaqF7KcaiJhR7gbr5KZpump',
+    // Token names are attacker-controlled: anyone can deploy "<script> & co".
+    symbol: 'A&B<>',
+    name: 'Tom & Jerry <script>',
+    tokenAmount: 1_234_567,
+    solSpent: 2.5,
+    usdSpent: 480,
+    mcapUsd: 42_000,
+    note: 'Found on $TRIPLET & friends <hi>',
+    signature: '5'.repeat(64),
+    ...over,
+  });
+
+  it('renders a plain buy alert safely', async () => {
+    const { renderBuyAlert } = await import('../src/bot/render/screens.js');
+    checkHtml('buy alert', renderBuyAlert(alert()));
+  });
+
+  it('renders a convergence alert safely', async () => {
+    const { renderBuyAlert } = await import('../src/bot/render/screens.js');
+    checkHtml(
+      'convergence alert',
+      renderBuyAlert(
+        alert({
+          convergence: {
+            wallets: ['7Mwof5tBvNPC6e1zwtHRQynqXcuDpqqbeY9vSZLW2Bv8', 'DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm'],
+            totalSolSpent: 9.25,
+            firstTs: Math.floor(Date.now() / 1000) - 600,
+          },
+        }),
+      ),
+    );
+  });
+
+  it('renders honeypot flags safely', async () => {
+    const { renderBuyAlert } = await import('../src/bot/render/screens.js');
+    checkHtml(
+      'flagged alert',
+      renderBuyAlert(alert({ freezeAuthorityActive: true, mintAuthorityActive: true })),
+    );
+  });
+
+  it('never emits a hostile token name as markup', async () => {
+    const { renderBuyAlert } = await import('../src/bot/render/screens.js');
+    expect(renderBuyAlert(alert())).not.toContain('<script>');
+  });
+
+  it('renders the watchlist safely, including an empty one', async () => {
+    const { renderWatchlist } = await import('../src/bot/render/screens.js');
+    checkHtml('watchlist', renderWatchlist([
+      { wallet: '7Mwof5tBvNPC6e1zwtHRQynqXcuDpqqbeY9vSZLW2Bv8', note: 'Found on $A & B <x>', addedAt: 1_700_000_000 },
+    ]));
+    checkHtml('empty watchlist', renderWatchlist([]));
+  });
+});
