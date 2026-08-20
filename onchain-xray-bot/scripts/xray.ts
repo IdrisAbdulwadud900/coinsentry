@@ -6,6 +6,7 @@
  *   npm run xray -- <contract-address>
  */
 import { analyzeToken, AnalysisError } from '../src/engine/analyze.js';
+import { rpcRequestCount } from '../src/data/evmPair.js';
 import { renderOverview } from '../src/bot/render/overview.js';
 import {
   renderFloorEntries,
@@ -66,7 +67,9 @@ async function main(): Promise<void> {
       }
     }, { deep });
 
-    console.error(`\x1b[2m\ncompleted in ${((Date.now() - started) / 1000).toFixed(1)}s\x1b[0m`);
+    console.error(
+      `\x1b[2m\ncompleted in ${((Date.now() - started) / 1000).toFixed(1)}s · ${rpcRequestCount} EVM RPC requests\x1b[0m`,
+    );
 
     banner('OVERVIEW');
     console.log(toText(renderOverview(report)));
