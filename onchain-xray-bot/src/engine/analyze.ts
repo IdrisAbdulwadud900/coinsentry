@@ -60,6 +60,14 @@ function usdShort(v: number): string {
 /** Share of the hydration budget spent on the launch window vs. recent activity. */
 const LAUNCH_WINDOW_SHARE = 0.7;
 
+/**
+ * How close to the recorded creation time counts as having reached the launch.
+ * DexScreener reports the POOL's creation, which for a migrated coin is minutes
+ * to hours after the token's first transaction, so an exact match would call
+ * every complete scan incomplete.
+ */
+const LAUNCH_REACHED_TOLERANCE_SECONDS = 3 * 3600;
+
 export interface AnalyzeOptions {
   /**
    * Replay every transaction. Off by default: the replay costs minutes and only
@@ -596,9 +604,19 @@ async function loadSolanaHistory(
   // Listed to the token's genesis, not to the hydration budget — see
   // MAX_SIGNATURE_SCAN. Reaching the first transaction is what makes the floor
   // and the early-buyer list mean anything.
-  const sigs = await helius.listSignatures(meta.address, config.MAX_SIGNATURE_SCAN, (n) => {
-    void onProgress({ stage: 'Listing transactions', detail: `${n.toLocaleString()} found`, pct: 0.14 });
-  });
+  const sigs = await helius.listSignatures(
+    meta.address,
+    config.MAX_SIGNATURE_SCAN,
+    (n) => {
+      void onProgress({
+        stage: 'Listing transactions',
+        detail: `${n.toLocaleString()} found`,
+        pct: 0.14,
+      });
+    },
+    undefined,
+    meta.createdAt,
+  );
 
   if (sigs.length === 0) {
     throw new AnalysisError('No transactions found for that mint.', 'Double-check the address.');
@@ -608,7 +626,14 @@ async function loadSolanaHistory(
   // not, the oldest signature in hand is mid-history and must not be presented
   // as the launch — the floor, the entry tiers and "who was first" all become
   // statements about an arbitrary recent window instead.
-  const reachedLaunch = sigs.length < config.MAX_SIGNATURE_SCAN;
+  // The walk can also stop short by projecting that the launch is unreachable,
+  // so "did we finish" is no longer the same question as "did we hit the cap".
+  const oldestTs = sigs[sigs.length - 1]?.blockTime ?? null;
+  const reachedLaunch =
+    sigs.length < config.MAX_SIGNATURE_SCAN &&
+    (meta.createdAt === null ||
+      oldestTs === null ||
+      oldestTs <= meta.createdAt + LAUNCH_REACHED_TOLERANCE_SECONDS);
   const truncated = !reachedLaunch || sigs.length > config.MAX_TX_FETCH;
 
   if (!reachedLaunch) {
@@ -616,7 +641,7 @@ async function loadSolanaHistory(
     // still exact here, and that is decided later. Claiming otherwise would
     // contradict the launchpad note.
     warnings.push(
-      `This token has more than ${config.MAX_SIGNATURE_SCAN.toLocaleString()} transactions, so the scan could not reach its launch — the wallet lists below cover only the most recent window, and the earliest buyers are missing.`,
+      `This token has too many transactions for the scan to reach its launch — the wallet lists below cover only the most recent window, and the earliest buyers are missing.`,
     );
   } else if (sigs.length > config.MAX_TX_FETCH) {
     warnings.push(

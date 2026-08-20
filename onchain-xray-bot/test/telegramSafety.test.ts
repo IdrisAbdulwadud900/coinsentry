@@ -226,3 +226,25 @@ describe('a wallet that moved its position out is not reported as flat', () => {
     expect(positionBadge(sold)).toBe('🚪 EXITED');
   });
 });
+
+describe('"none found" and "could not look" are different answers', () => {
+  it('says relays were not searched when the scan missed the launch', async () => {
+    // A relay is an EARLY wallet passing supply to a seller, so its evidence
+    // sits at the start of the coin's life. A scan that only covered the last
+    // day of a 176-day-old coin searched the one place relays are least likely
+    // to be — reporting that as "none" turns a gap into a clean bill of health.
+    const { renderRelays } = await import('../src/bot/render/screens.js');
+    const html = renderRelays(makeReport({ supplyRelays: [], reachedLaunch: false }), 0);
+    expect(html).toContain('not looked for');
+    expect(renderOverview(makeReport({ supplyRelays: [], reachedLaunch: false }))).toContain(
+      'not searched',
+    );
+  });
+
+  it('still reports a clean result when the launch was reached', async () => {
+    const { renderRelays } = await import('../src/bot/render/screens.js');
+    const html = renderRelays(makeReport({ supplyRelays: [], reachedLaunch: true }), 0);
+    expect(html).toContain('clean result');
+    expect(renderOverview(makeReport({ supplyRelays: [], reachedLaunch: true }))).toContain('none');
+  });
+});

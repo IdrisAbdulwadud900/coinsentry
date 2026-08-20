@@ -46,9 +46,11 @@ function banner(title: string): void {
 }
 
 async function main(): Promise<void> {
-  const address = process.argv[2];
+  const args = process.argv.slice(2);
+  const deep = args.includes('--deep');
+  const address = args.find((a) => !a.startsWith('--'));
   if (!address) {
-    console.error('usage: npm run xray -- <contract-address>');
+    console.error('usage: npm run xray -- <contract-address> [--deep]');
     process.exit(1);
   }
 
@@ -62,7 +64,7 @@ async function main(): Promise<void> {
         lastStage = line;
         console.error(`\x1b[2m[${String(Math.round(u.pct * 100)).padStart(3)}%] ${line}\x1b[0m`);
       }
-    });
+    }, { deep });
 
     console.error(`\x1b[2m\ncompleted in ${((Date.now() - started) / 1000).toFixed(1)}s\x1b[0m`);
 

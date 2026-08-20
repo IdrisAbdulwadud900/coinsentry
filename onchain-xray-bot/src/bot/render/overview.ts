@@ -119,9 +119,14 @@ export function renderOverview(report: AnalysisReport): string {
     [
       ICON.relay,
       'Supply relays',
-      report.supplyRelays.length === 0
-        ? 'none'
-        : `${report.supplyRelays.length}${strongRelays ? ` (${strongRelays} strong)` : ''}`,
+      report.supplyRelays.length > 0
+        ? `${report.supplyRelays.length}${strongRelays ? ` (${strongRelays} strong)` : ''}`
+        : // Relays are an early-wallet pattern, so a scan that never reached the
+          // launch did not search where they live. Saying "none" there reports a
+          // gap as a finding.
+          report.reachedLaunch
+          ? 'none'
+          : 'not searched',
     ],
   ];
   lines.push(

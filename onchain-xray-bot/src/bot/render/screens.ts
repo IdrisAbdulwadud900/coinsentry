@@ -501,6 +501,18 @@ function renderLinkedWallet(report: AnalysisReport, l: LinkedWallet, index: numb
 
 export function renderRelays(report: AnalysisReport, page: number): string {
   if (report.supplyRelays.length === 0) {
+    // "None found" and "could not look" are different answers, and only one of
+    // them is a clean bill of health. A scan that never reached the launch
+    // searched a recent window, which is where relays are least likely to be:
+    // the pattern is an EARLY wallet handing supply on, so its evidence sits at
+    // the start of the coin's life, exactly the part that went unread.
+    if (!report.reachedLaunch) {
+      return empty(
+        ICON.relay,
+        'SUPPLY RELAYS',
+        'The scan could not reach this coin\'s launch, so relays were only searched in the most recent window. A relay is an EARLY wallet passing supply to a seller, so the evidence sits in the part that went unread — this is "not looked for", not "not there".',
+      );
+    }
     return empty(
       ICON.relay,
       'SUPPLY RELAYS',
