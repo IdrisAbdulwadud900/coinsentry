@@ -192,8 +192,17 @@ const schema = z.object({
   EVM_V4_MAX_POOLS: num(8),
   /** Pause before retrying log chunks that failed, so a rate limit can clear. */
   EVM_LOG_RETRY_DELAY_MS: num(1_500),
-  /** Attempts to recover a failed log chunk before giving up on it. */
-  EVM_LOG_RETRIES: num(3),
+  /**
+   * Attempts to recover a failed log chunk before giving up on it. Each pass
+   * halves the range, so this is really "how small are we willing to go".
+   *
+   * Six rather than three, measured: on a dense Base token three passes stop at
+   * 1,250-block ranges and leave 5% of the chain unread, while six reach ~150
+   * blocks and leave 1% — 209,849 trades recovered instead of 147,985. It costs
+   * 2.5x the requests but is not slower, because the extra calls are small and
+   * run concurrently, and they are only issued for ranges that already failed.
+   */
+  EVM_LOG_RETRIES: num(6),
   /**
    * Share of transfer chunks that may be lost before a scan is refused. A
    * partly-read history looks like a successful scan but every figure in it is
