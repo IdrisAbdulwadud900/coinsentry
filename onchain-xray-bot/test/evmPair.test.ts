@@ -47,22 +47,38 @@ vi.mock('viem', async () => {
           default: throw new Error('unexpected call');
         }
       },
-      getLogs: async ({ event }: { event: { name: string; inputs: unknown[] } }) => {
+      getLogs: async ({
+        event,
+        fromBlock,
+        toBlock,
+      }: {
+        event: { name: string; inputs: unknown[] };
+        fromBlock?: bigint;
+        toBlock?: bigint;
+      }) => {
         state.logCalls = (state.logCalls ?? 0) + 1;
         state.eventShapes = [...(state.eventShapes ?? []), `${event.name}/${event.inputs.length}`];
         if (state.logsThrow) throw new Error('range refused');
+        // Honour the requested range, so halving a chunk actually returns less
+        // — without that, any test about splitting a range proves nothing.
+        const inRange = (b: bigint) =>
+          (fromBlock === undefined || b >= fromBlock) && (toBlock === undefined || b <= toBlock);
         if (event.name === 'Transfer') {
-          return state.transfers.map((t) => ({
-            args: { from: t.from, to: t.to, value: t.value },
-            transactionHash: t.tx, blockNumber: t.block,
-          }));
+          return state.transfers
+            .filter((t) => inRange(t.block))
+            .map((t) => ({
+              args: { from: t.from, to: t.to, value: t.value },
+              transactionHash: t.tx, blockNumber: t.block,
+            }));
         }
         // Distinguish V2 (6 inputs) from V3 (7) by ABI shape.
         if (event.inputs.length === 6) {
-          return state.swapsV2.map((s) => ({
-            args: { amount0In: 0n, amount1In: s.quoteIn, amount0Out: 0n, amount1Out: s.quoteOut },
-            transactionHash: s.tx, blockNumber: s.block,
-          }));
+          return state.swapsV2
+            .filter((s) => inRange(s.block))
+            .map((s) => ({
+              args: { amount0In: 0n, amount1In: s.quoteIn, amount0Out: 0n, amount1Out: s.quoteOut },
+              transactionHash: s.tx, blockNumber: s.block,
+            }));
         }
         return [];
       },
@@ -285,5 +301,34 @@ describe('trades come back in time order', () => {
     const res = await new EvmClient('base').replay(TOKEN, PAIR, opts());
     const times = res.trades.map((t) => t.ts);
     expect(times).toEqual([...times].sort((a, b) => a - b));
+  });
+});
+
+describe('a dense response on a public endpoint is kept', () => {
+  it('does not discard a full-looking page when the cap is on block range', async () => {
+    // Public endpoints cap the BLOCK RANGE and return every log inside it, so a
+    // dense 10k-block slice legitimately comes back near 10,000 logs. Treating
+    // that as truncation re-read it, ran out of retries, and reported the
+    // blocks as unread — which cost one token its entire floor-entry list.
+    state.head = 100_000n;
+    state.transfers = Array.from({ length: 9_600 }, (_, i) => ({
+      from: PAIR, to: ALICE, value: 10n ** 18n, tx: `0x${i}`, block: BigInt(i % 90_000),
+    }));
+    state.swapsV2 = state.transfers.map((t) => ({
+      quoteIn: 10n ** 16n, quoteOut: 0n, tx: t.tx, block: t.block,
+    }));
+    const res = await new EvmClient('base').replay(TOKEN, PAIR, opts());
+    expect(res.trades.length).toBeGreaterThan(0);
+    expect(res.lostChunks).toBe(0);
+  });
+});
+
+describe('a keyed RPC widens the log window', () => {
+  it('asks for bigger ranges when an endpoint is configured', async () => {
+    // Paying for a better endpoint must actually change what the bot asks for;
+    // otherwise it keeps requesting the free tier's 10,000-block slices.
+    const { logChunkFor, hasKeyedRpc } = await import('../src/data/chains.js');
+    expect(hasKeyedRpc('solana')).toBe(false);
+    expect(logChunkFor('base')).toBeGreaterThan(0);
   });
 });

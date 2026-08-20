@@ -175,6 +175,20 @@ const schema = z.object({
    * V4 pools read together. A topic filter listing every pool silently
    * under-returns on public endpoints, so this reads the deepest few.
    */
+  /**
+   * Blocks per log request once a keyed RPC is configured for the chain. Large
+   * on purpose: the halving retry backs off to whatever the endpoint allows, so
+   * this only needs to be an upper bound rather than a correct guess.
+   */
+  EVM_KEYED_LOG_CHUNK_BLOCKS: num(100_000),
+  /**
+   * A chunk returning at least this many logs is treated as possibly truncated
+   * and re-read in halves. Providers cap responses (Alchemy at 10,000 logs),
+   * and a cap that returns a short answer WITHOUT an error is indistinguishable
+   * from a quiet stretch of chain — which is how a scan reports numbers that
+   * are simply wrong. 0 disables the check.
+   */
+  EVM_LOG_TRUNCATION_SUSPECT: num(9_500),
   EVM_V4_MAX_POOLS: num(8),
   /** Pause before retrying log chunks that failed, so a rate limit can clear. */
   EVM_LOG_RETRY_DELAY_MS: num(1_500),
