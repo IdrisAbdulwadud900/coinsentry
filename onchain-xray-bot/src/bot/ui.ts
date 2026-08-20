@@ -131,9 +131,17 @@ export function walletRow(
         ? ledger.currentMultiple
         : ledger.heldMultiple;
 
+  // The multiple is labelled, because the same row can carry two different
+  // ones and an unlabelled number invites the reader to treat them as the same
+  // measurement. A holder showed "→ 54.0x" beside "100x+ club" — the first is
+  // what the position is worth now, the second the peak it rode through, and
+  // together they read as the bot contradicting itself.
+  const mLabel =
+    opts.showMultiple === 'current' ? 'now' : opts.showMultiple === 'realized' ? 'sold at' : 'rode';
+
   const parts = [
     `entry ${usd(ledger.entryMcap)}`,
-    m > 0 ? `${ICON.arrow} ${mult(m)}` : null,
+    m > 0 ? `${mLabel} ${mult(m)}` : null,
     opts.supplyPct !== undefined && opts.supplyPct > 0 ? `${pct(opts.supplyPct, 2)} supply` : null,
   ].filter(Boolean);
 

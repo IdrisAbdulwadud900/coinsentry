@@ -125,3 +125,28 @@ describe('copy list', () => {
     assertValidTelegramHtml(html);
   });
 });
+
+describe('a row says which multiple it is showing', () => {
+  it('labels a holder\'s multiple "now", not as the run it rode', async () => {
+    // A holder showed "→ 54.0x" beside "100x+ club": the first is what the
+    // position is worth today, the second the peak it rode through. Unlabelled
+    // and adjacent, they read as the bot contradicting itself.
+    const { walletRow } = await import('../src/bot/ui.js');
+    const l = makeLedger({ stillHolding: true, currentMultiple: 54, heldMultiple: 101 });
+    const row = walletRow('base', '🥇', l, { showMultiple: 'current' });
+    expect(row).toContain('now 54.0x');
+    expect(row).not.toContain('rode');
+  });
+
+  it('labels an exited wallet\'s multiple as the run it rode', async () => {
+    const { walletRow } = await import('../src/bot/ui.js');
+    const l = makeLedger({ stillHolding: false, heldMultiple: 233 });
+    expect(walletRow('base', '🥇', l, { showMultiple: 'held' })).toContain('rode 233x');
+  });
+
+  it('labels a realised multiple as what they sold at', async () => {
+    const { walletRow } = await import('../src/bot/ui.js');
+    const l = makeLedger({ realizedMultiple: 3.2 });
+    expect(walletRow('base', '🥇', l, { showMultiple: 'realized' })).toContain('sold at 3.20x');
+  });
+});
