@@ -203,3 +203,23 @@ describe('commands', () => {
     expect(calls.filter((c) => c.method === 'sendMessage')).toHaveLength(2);
   });
 });
+
+describe('tracking is offered only where it can work', () => {
+  it('hides the track button on an EVM report', async () => {
+    // Helius speaks Solana only — it rejects an EVM address as "Invalid Base58
+    // String" — so a tracked Base wallet would wear the badge and never alert.
+    const { walletKeyboard } = await import('../src/bot/keyboards.js');
+    const labels = walletKeyboard('s1', 'floor', 0, { walletIdx: undefined })
+      .inline_keyboard.flat()
+      .map((b) => b.text);
+    expect(labels.some((l) => l.includes('Track'))).toBe(false);
+  });
+
+  it('offers it when a wallet index is supplied', async () => {
+    const { walletKeyboard } = await import('../src/bot/keyboards.js');
+    const labels = walletKeyboard('s1', 'floor', 0, { walletIdx: 3 })
+      .inline_keyboard.flat()
+      .map((b) => b.text);
+    expect(labels.some((l) => l.includes('Track'))).toBe(true);
+  });
+});

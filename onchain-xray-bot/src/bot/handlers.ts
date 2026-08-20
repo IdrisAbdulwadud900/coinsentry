@@ -40,6 +40,7 @@ import {
 import { progressCard, ICON } from './ui.js';
 import { sortEarlyBuyers, type EntrySort } from '../engine/entries.js';
 import { rankBadge, esc } from '../util/format.js';
+import { CHAINS } from '../data/chains.js';
 
 const SEND_OPTS = {
   parse_mode: 'HTML' as const,
@@ -54,7 +55,7 @@ const WELCOME = [
   `🏆 <b>Proven winners</b> — wallets that made ${'$'}300+ at 3x+ on this coin AND have won at least 3 other coins the same way`,
   `${ICON.floor} <b>First buyers</b> — who was in at the bottom, and what they walked away with`,
   `${ICON.diamond} <b>Diamond hands</b> — who rode it 3x, 10x, 100x before selling anything`,
-  '📌 <b>Track</b> any wallet and get told when it buys something new',
+  '📌 <b>Track</b> a Solana wallet and get told when it buys something new',
   '',
   `<b>${'/'}deep &lt;contract&gt;</b> replays every transaction instead — much slower, but it is what uncovers supply relays and the dev's linked wallets.`,
   '',
@@ -381,9 +382,16 @@ async function renderView(
         return;
       }
       const watched = await isWatched(session.chatId, wallet!);
+      // No track button on chains the poller cannot read. Offering one is a
+      // false affordance: Helius speaks Solana only, so an EVM wallet would
+      // wear a "Tracked" badge and never alert.
+      const trackable = report.token.chain === 'solana';
       await edit(
         renderWallet(report, ledger),
-        walletKeyboard(id, back as View, page, { walletIdx: idx, watched }),
+        walletKeyboard(id, back as View, page, {
+          walletIdx: trackable ? idx : undefined,
+          watched,
+        }),
       );
       return;
     }
@@ -398,12 +406,31 @@ async function renderView(
         return;
       }
 
+      // Tracking polls Helius, which speaks Solana only — it rejects an EVM
+      // address outright as "Invalid Base58 string". Accepting one anyway put a
+      // "📌 Tracked" badge on a wallet that could never produce an alert, and
+      // the failure was invisible: the poller logged a warning and moved on.
+      if (report.token.chain !== 'solana') {
+        await ctx.answerCallbackQuery({
+          text: `Wallet tracking works on Solana only. ${CHAINS[report.token.chain].label} wallets can be analysed but not watched — following them needs a per-chain log scan this bot does not run yet.`,
+          show_alert: true,
+        });
+        return;
+      }
+
       const already = await isWatched(session.chatId, wallet);
       if (already) {
         await unwatchWallet(session.chatId, wallet);
       } else {
         const note = `Found on $${report.token.symbol.trim().toUpperCase()}`;
         const res = await watchWallet(session.chatId, wallet, note);
+        if (res === 'unsupported') {
+          await ctx.answerCallbackQuery({
+            text: 'Only Solana wallets can be tracked right now.',
+            show_alert: true,
+          });
+          return;
+        }
         if (res === 'full') {
           await ctx.answerCallbackQuery({
             text: `Watchlist is full (${config.MAX_WATCHED_WALLETS}). Remove one first.`,

@@ -198,3 +198,22 @@ describe('mergeBuysByMint', () => {
     expect(mergeBuysByMint([])).toEqual([]);
   });
 });
+
+describe('only watchable wallets reach the list', () => {
+  it('accepts a Solana address and refuses an EVM one', async () => {
+    // The poller reads Helius, which answers an EVM address with "Invalid
+    // Base58 string" — so storing one buys a "Tracked" badge that can never
+    // fire, and the failure is invisible in a caught warning.
+    const { isWatchableWallet } = await import('../src/data/watchlist.js');
+    expect(isWatchableWallet('7Mwof5tBvNPC6e1zwtHRQynqXcuDpqqbeY9vSZLW2Bv8')).toBe(true);
+    expect(isWatchableWallet('0x8367d463abda0b0270e81e6e5f5d701f8d3cf82d')).toBe(false);
+  });
+
+  it('rejects shapes that are neither', async () => {
+    const { isWatchableWallet } = await import('../src/data/watchlist.js');
+    expect(isWatchableWallet('')).toBe(false);
+    expect(isWatchableWallet('too-short')).toBe(false);
+    // 0 and O are not in the base58 alphabet.
+    expect(isWatchableWallet('0OOO0OOO0OOO0OOO0OOO0OOO0OOO0OOO')).toBe(false);
+  });
+});

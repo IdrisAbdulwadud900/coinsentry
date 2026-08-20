@@ -3,7 +3,7 @@ import { log } from '../util/log.js';
 import { HeliusClient } from '../data/helius.js';
 import { getToken as getJupToken } from '../data/jupiter.js';
 import { NativePriceOracle } from '../data/nativePrice.js';
-import { listWatched, setCursor, type WatchEntry } from '../data/watchlist.js';
+import { isWatchableWallet, listWatched, setCursor, type WatchEntry } from '../data/watchlist.js';
 import { recordBuys, findConvergence, hasRecentBuy, type Convergence } from '../data/buyLog.js';
 import { detectBuysAcross, mergeBuysByMint, type WalletBuy } from './walletWatch.js';
 
@@ -50,6 +50,9 @@ export async function pollWatchlist(): Promise<BuyAlert[]> {
 
   const alerts: BuyAlert[] = [];
   for (const entry of entries) {
+    // Entries stored before tracking was restricted to Solana would fail on
+    // every poll forever, logging a warning nobody reads.
+    if (!isWatchableWallet(entry.wallet)) continue;
     try {
       alerts.push(...(await checkOne(helius, entry, oracle)));
     } catch (err) {
