@@ -84,6 +84,8 @@ export function makeProviderEntry(over: Partial<ProviderEntry> = {}): ProviderEn
     investedUsd: 300,
     soldUsd: 900,
     totalPnlUsd: 600,
+    movedOutTokens: 0,
+    everHeldTokens: 1_000_000,
     holdingTokens: 0,
     supplyPct: 1.2,
     buyCount: 3,

@@ -91,6 +91,12 @@ export function buildProviderEntries(
       soldUsd: b.totalSoldUsd,
       totalPnlUsd: b.totalPnlUsd,
       holdingTokens: b.holdingTokens,
+      // Supply that left without a sale. A wallet showing a good entry, no
+      // sells and an empty balance did not walk away from the position — it
+      // handed it to another address, which is the pattern the relay screen
+      // exists to catch and which no amount of provider PnL will show.
+      movedOutTokens: Math.max(0, b.heldTokens - b.soldTokens - b.holdingTokens),
+      everHeldTokens: b.heldTokens,
       supplyPct: ctx.totalSupply > 0 ? (b.heldTokens / ctx.totalSupply) * 100 : 0,
       buyCount: b.buyCount,
       sellCount: b.sellCount,
@@ -149,4 +155,25 @@ export function providerBucket(e: ProviderEntry): number {
   let bucket = 0;
   for (const b of config.diamondBuckets) if (achieved >= b) bucket = b;
   return bucket;
+}
+
+/**
+ * Early wallets that moved part of their position out without selling it.
+ *
+ * The source half of a supply relay, and the only half the provider's records
+ * can show. On a coin too large to replay, this is the difference between
+ * saying "not searched" and naming the wallets worth looking at — but where the
+ * supply went is genuinely unknown here, so the UI must not call it a relay.
+ *
+ * A trickle is ignored: dust left behind by a full exit is not a transfer out.
+ */
+export function movedSupplyOut(entries: ProviderEntry[]): ProviderEntry[] {
+  return entries
+    .filter(
+      (e) =>
+        e.movedOutTokens > 0 &&
+        e.everHeldTokens > 0 &&
+        e.movedOutTokens / e.everHeldTokens > 0.02,
+    )
+    .sort((a, b) => b.movedOutTokens - a.movedOutTokens);
 }

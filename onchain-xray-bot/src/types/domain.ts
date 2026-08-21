@@ -178,6 +178,15 @@ export interface ProviderEntry {
   soldUsd: number;
   totalPnlUsd: number;
   holdingTokens: number;
+  /**
+   * Tokens that left this wallet without being sold — acquired, minus sold,
+   * minus still held. This is the source half of a supply relay, and it is
+   * derivable from the provider's own counts, so it survives on coins whose
+   * history is far too large to replay.
+   */
+  movedOutTokens: number;
+  /** Tokens the wallet ever acquired, the denominator for the above. */
+  everHeldTokens: number;
   supplyPct: number;
   buyCount: number;
   sellCount: number;

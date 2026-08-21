@@ -1,5 +1,6 @@
 import type { AnalysisReport } from '../../types/domain.js';
 import { computeVerdict } from '../../engine/verdict.js';
+import { movedSupplyOut } from '../../engine/providerEntries.js';
 import { summariseSmartMoney } from '../../engine/smartMoney.js';
 import {
   esc,
@@ -124,9 +125,11 @@ export function renderOverview(report: AnalysisReport): string {
         : // Relays are an early-wallet pattern, so a scan that never reached the
           // launch did not search where they live. Saying "none" there reports a
           // gap as a finding.
-          report.reachedLaunch
+          report.reachedLaunch && report.tradeCount > 0
           ? 'none'
-          : 'not searched',
+          : movedSupplyOut(report.providerEntries).length > 0
+            ? `${movedSupplyOut(report.providerEntries).length} moved supply out`
+            : 'not searched',
     ],
   ];
   lines.push(

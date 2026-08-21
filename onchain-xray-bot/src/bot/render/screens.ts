@@ -2,7 +2,7 @@ import { config } from '../../config.js';
 import type { AnalysisReport, WalletLedger, SupplyRelay, LinkedWallet, ProviderEntry } from '../../types/domain.js';
 import { LINK_LABEL } from '../../engine/devGraph.js';
 import { sortEarlyBuyers, minPositionUsd, type EntrySort } from '../../engine/entries.js';
-import { providerBucket } from '../../engine/providerEntries.js';
+import { providerBucket, movedSupplyOut } from '../../engine/providerEntries.js';
 import { computeVerdict } from '../../engine/verdict.js';
 import { PLAY_META } from '../../engine/winningPlay.js';
 import {
@@ -506,11 +506,40 @@ export function renderRelays(report: AnalysisReport, page: number): string {
     // searched a recent window, which is where relays are least likely to be:
     // the pattern is an EARLY wallet handing supply on, so its evidence sits at
     // the start of the coin's life, exactly the part that went unread.
-    if (!report.reachedLaunch) {
+    // True when the transfer graph was never fully read: either the replay fell
+    // short of the launch, or there was no replay at all. The fast path reports
+    // reachedLaunch while replaying nothing, so that flag alone is not enough.
+    const graphIncomplete = !report.reachedLaunch || report.tradeCount === 0;
+    if (graphIncomplete) {
+      // The transfer graph needs a replay this coin was too large for, but the
+      // provider's own token counts still reveal the SOURCE half: supply that
+      // left a wallet without being sold. Naming those wallets beats saying
+      // "not searched", as long as it does not pretend to know where it went.
+      const movers = movedSupplyOut(report.providerEntries);
+      if (movers.length > 0) {
+        const rows = movers.slice(0, 5).map((e) => {
+          const pctMoved = (e.movedOutTokens / e.everHeldTokens) * 100;
+          return (
+            `${ICON.sub} <a href="${walletUrl(report.token.chain, e.wallet)}">${esc(shortAddr(e.wallet, 4, 4))}</a> ` +
+            `${esc(`entry ${usd(e.entryMcap)} ${ICON.bullet} moved ${pct(pctMoved, 0)} of its position out ${ICON.bullet} ${e.sellCount} sells`)}`
+          );
+        });
+        return clampMessage(
+          [
+            heading(ICON.relay, 'SUPPLY RELAYS', `$${esc(report.token.symbol.trim().toUpperCase())}`),
+            '',
+            `<i>The full transfer graph needs a replay this coin is too large for. These early wallets moved supply out WITHOUT selling it, which is the source half of a relay — where it went is not traced.</i>`,
+            '',
+            rows.join('\n'),
+            '',
+            `<blockquote><i>A wallet with many sells may simply be moving between its own addresses. One with none, an empty balance and a good entry is the pattern worth reading.</i></blockquote>`,
+          ].join('\n'),
+        );
+      }
       return empty(
         ICON.relay,
         'SUPPLY RELAYS',
-        'The scan could not reach this coin\'s launch, so relays were only searched in the most recent window. A relay is an EARLY wallet passing supply to a seller, so the evidence sits in the part that went unread — this is "not looked for", not "not there".',
+        'The scan could not reach this coin\'s launch, so relays were only searched in the most recent window — and no early wallet in the provider\'s records moved supply out without selling it either. A relay is an EARLY wallet passing supply to a seller, so treat this as "little sign of it", not a clean bill of health.',
       );
     }
     return empty(

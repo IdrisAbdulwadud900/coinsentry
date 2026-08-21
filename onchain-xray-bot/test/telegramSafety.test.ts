@@ -234,16 +234,50 @@ describe('"none found" and "could not look" are different answers', () => {
     // day of a 176-day-old coin searched the one place relays are least likely
     // to be — reporting that as "none" turns a gap into a clean bill of health.
     const { renderRelays } = await import('../src/bot/render/screens.js');
-    const html = renderRelays(makeReport({ supplyRelays: [], reachedLaunch: false }), 0);
-    expect(html).toContain('not looked for');
+    const html = renderRelays(
+      makeReport({ supplyRelays: [], reachedLaunch: false, providerEntries: [] }),
+      0,
+    );
+    expect(html).toContain('little sign of it');
     expect(renderOverview(makeReport({ supplyRelays: [], reachedLaunch: false }))).toContain(
       'not searched',
     );
   });
 
+  it('names the wallets that moved supply out when the graph is incomplete', async () => {
+    // The transfer graph needs a replay the coin was too large for, but the
+    // provider's token counts still show the SOURCE half: supply that left a
+    // wallet without being sold. Naming those beats saying "not searched".
+    const { renderRelays } = await import('../src/bot/render/screens.js');
+    const mover = makeProviderEntry({
+      wallet: 'Mover11111111111111111111111111111111111',
+      movedOutTokens: 600_000,
+      everHeldTokens: 1_000_000,
+      holdingTokens: 0,
+      sellCount: 0,
+      entryMcap: 7_500,
+    });
+    const html = renderRelays(
+      makeReport({ supplyRelays: [], reachedLaunch: true, tradeCount: 0, providerEntries: [mover] }),
+      0,
+    );
+    expect(html).toContain('source half');
+    expect(html).toContain('60%');
+    checkHtml('relay source half', html);
+  });
+
+  it('ignores a dust remainder rather than calling it a transfer out', async () => {
+    const { movedSupplyOut } = await import('../src/engine/providerEntries.js');
+    const dust = makeProviderEntry({ movedOutTokens: 1, everHeldTokens: 1_000_000 });
+    expect(movedSupplyOut([dust])).toHaveLength(0);
+  });
+
   it('still reports a clean result when the launch was reached', async () => {
     const { renderRelays } = await import('../src/bot/render/screens.js');
-    const html = renderRelays(makeReport({ supplyRelays: [], reachedLaunch: true }), 0);
+    const html = renderRelays(
+      makeReport({ supplyRelays: [], reachedLaunch: true, tradeCount: 1_500 }),
+      0,
+    );
     expect(html).toContain('clean result');
     expect(renderOverview(makeReport({ supplyRelays: [], reachedLaunch: true }))).toContain('none');
   });
