@@ -168,6 +168,15 @@ const schema = z.object({
   WINNER_LOOKUPS: num(12),
   /** Per-wallet ceiling for the heavy history call. Not retried on timeout. */
   WINNER_LOOKUP_TIMEOUT_MS: num(12_000),
+  /**
+   * How long a wallet's cross-coin track record stays usable. Long, because a
+   * record spanning thousands of coins does not move within the hour, and these
+   * are the requests the provider rate-limits first.
+   */
+  TRACK_RECORD_TTL_MS: num(3_600_000),
+  /** Wallets held in that cache before the oldest is evicted. */
+  TRACK_RECORD_CACHE_MAX: num(500),
+
   /** Wall-clock ceiling for the whole track-record phase. */
   WINNER_PHASE_BUDGET_MS: num(45_000),
 
