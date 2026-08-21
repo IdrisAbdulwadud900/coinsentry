@@ -11,7 +11,8 @@
     "test": "vitest run",
     "xray": "tsx scripts/xray.ts",
     "probe": "tsx scripts/probe.ts",
-    "launchpads": "tsx scripts/launchpads.ts"
+    "launchpads": "tsx scripts/launchpads.ts",
+    "audit": "tsx scripts/audit.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.7",
