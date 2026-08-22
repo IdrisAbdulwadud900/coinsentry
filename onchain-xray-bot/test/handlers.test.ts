@@ -359,3 +359,44 @@ describe('paste a wallet, pick a filter, end up tracking it', () => {
     }
   });
 });
+
+describe('track flow error paths', () => {
+  it('an expired prompt says so instead of failing silently', async () => {
+    // Prompt ids are held in memory and expire. A restart or a day-old message
+    // must not leave a button that appears to work and does nothing.
+    const { bot, calls } = makeBot();
+    await bot.handleUpdate(cbq('x|deadbeef|trackask|0|'));
+    const answers = calls.filter((c) => c.method === 'answerCallbackQuery');
+    expect(String(answers[0]?.payload.text ?? '')).toMatch(/expired/i);
+  });
+
+  it('a filter tap on an expired prompt is also handled', async () => {
+    const { bot, calls } = makeBot();
+    await bot.handleUpdate(cbq('x|deadbeef|trackset|0|sells'));
+    const answers = calls.filter((c) => c.method === 'answerCallbackQuery');
+    expect(String(answers[0]?.payload.text ?? '')).toMatch(/expired/i);
+  });
+
+  it('re-picking a filter on an already-tracked wallet changes it', async () => {
+    // Tapping a different filter plainly means "report this instead", so
+    // refusing with "already on your list" would be the wrong answer.
+    const WALLET = '7Mwof5tBvNPC6e1zwtHRQynqXcuDpqqbeY9vSZLW2Bv8';
+    const { AnalysisError } = await import('../src/engine/analyze.js');
+    analyzeMock.mockRejectedValue(new AnalysisError('No trading pair found.'));
+    accountKindMock.mockResolvedValue('wallet');
+
+    const { bot, calls } = makeBot();
+    await bot.handleUpdate(msg(WALLET));
+    const kb = calls[calls.length - 1]!.payload.reply_markup as
+      { inline_keyboard: { text: string; callback_data?: string }[][] };
+    const trackData = kb.inline_keyboard.flat()[0]!.callback_data!;
+    const promptId = trackData.split('|')[1]!;
+
+    await bot.handleUpdate(cbq(`x|${promptId}|trackset|0|buys`));
+    await bot.handleUpdate(cbq(`x|${promptId}|trackset|0|transfers`));
+
+    const { listWatched, filterOf } = await import('../src/data/watchlist.js');
+    const entry = (await listWatched(1)).find((e) => e.wallet === WALLET);
+    expect(filterOf(entry!)).toBe('transfers');
+  });
+});

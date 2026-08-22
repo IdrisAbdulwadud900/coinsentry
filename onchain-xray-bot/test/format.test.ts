@@ -129,3 +129,29 @@ describe('address detection', () => {
     expect(extractAddress('no address here')).toBeNull();
   });
 });
+
+describe('numbers that should never reach a screen', () => {
+  it('never renders negative zero', () => {
+    // Subtraction produces -0 routinely, and "-0" reads as a bug.
+    expect(count(-0)).toBe('0');
+    expect(pct(-0)).toBe('0.0%');
+  });
+
+  it('never renders scientific notation', () => {
+    // A multiple divides by an entry price and a percentage by a total, so a
+    // dust denominator makes either enormous — and "1e+21x" is not a multiple.
+    expect(mult(1e21)).not.toMatch(/e\+/);
+    expect(pct(1e21)).not.toMatch(/e\+/);
+    expect(usd(1e21)).not.toMatch(/e\+/);
+    expect(usd(1e-12)).not.toMatch(/e-/);
+  });
+
+  it('still answers dash for what it cannot render', () => {
+    for (const bad of [NaN, Infinity, -Infinity, null, undefined]) {
+      expect(usd(bad)).toBe('—');
+      expect(mult(bad)).toBe('—');
+      expect(pct(bad)).toBe('—');
+      expect(count(bad)).toBe('—');
+    }
+  });
+});

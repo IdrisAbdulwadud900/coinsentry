@@ -2,10 +2,10 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ['test/**/*.test.ts'],
-    environment: 'node',
-    // config.ts validates on import and exits the process when the token is
-    // missing, so the suite supplies a dummy one.
-    env: { TELEGRAM_BOT_TOKEN: 'test-token-0000000000' },
+    // Errors the code is SUPPOSED to log — a rate limit it recovers from, an
+    // RPC chunk it retries — printed full stack traces into the test output.
+    // A suite that always looks like something went wrong is a suite where a
+    // real error goes unnoticed.
+    env: { LOG_LEVEL: 'silent' },
   },
 });

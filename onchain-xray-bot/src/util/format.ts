@@ -55,18 +55,28 @@ export function compact(v: number | null | undefined, digits = 1): string {
  */
 export function count(v: number | null | undefined): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return '—';
-  const n = Math.round(v);
-  return n < 1_000_000 ? n.toLocaleString('en-US') : compact(n, 1);
+  // `+ 0` collapses negative zero, which a subtraction produces routinely and
+  // which renders as "-0" — a number that reads as a bug wherever it appears.
+  const n = Math.round(v) + 0;
+  return Math.abs(n) < 1_000_000 ? n.toLocaleString('en-US') : compact(n, 1);
 }
 
 export function pct(v: number | null | undefined, digits = 1): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return '—';
-  return `${v.toFixed(digits)}%`;
+  // toFixed switches to exponential above 1e21, and "1e+21%" is not a
+  // percentage anyone can read. Nothing sane reaches that, but a percentage is
+  // a ratio and a near-zero denominator makes one enormous.
+  if (Math.abs(v) >= 1e15) return '>1000T%';
+  return `${(v + 0).toFixed(digits)}%`;
 }
 
 /** 3.4x / 128x — multiples are the core unit of this bot. */
 export function mult(v: number | null | undefined): string {
   if (v === null || v === undefined || !Number.isFinite(v) || v <= 0) return '—';
+  // A multiple divides by an entry price, so a dust entry makes one enormous
+  // and Number's toString flips to exponential past 1e21. "1e+21x" is not a
+  // multiple; a bounded statement is.
+  if (v >= 1e12) return '>1T x';
   if (v >= 100) return `${Math.round(v)}x`;
   if (v >= 10) return `${v.toFixed(1)}x`;
   return `${v.toFixed(2)}x`;
