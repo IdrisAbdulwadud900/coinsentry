@@ -9,7 +9,12 @@ import { log } from './log.js';
 export function redactUrl(url: string): string {
   return url
     .replace(/([?&](?:api[-_]?key|apikey|key|token|access[-_]?token)=)[^&]+/gi, '$1***')
-    .replace(/(helius-rpc\.com\/)[^?#/]+/gi, '$1***');
+    .replace(/(helius-rpc\.com\/)[^?#/]+/gi, '$1***')
+    // Telegram puts the bot token in the PATH, not a query parameter, so the
+    // rule above never saw it. A single failed startup call printed the whole
+    // token to the log, because the error came from grammy rather than from
+    // here and arrived at the logger with its URL intact.
+    .replace(/(api\.telegram\.org\/bot)[^/\s]+/gi, '$1***');
 }
 
 export class HttpError extends Error {

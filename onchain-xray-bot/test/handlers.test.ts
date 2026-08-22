@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { makeReport, makeProviderEntry } from './fixtures.js';
 
 // The analysis is network-bound; routing is what these tests exercise.
@@ -8,6 +11,23 @@ vi.mock('../src/engine/analyze.js', async () => {
     '../src/engine/analyze.js',
   );
   return { ...actual, analyzeToken: (...a: unknown[]) => analyzeMock(...a) };
+});
+
+// The wallet/mint distinction asks the chain. Left unmocked these tests need a
+// live Helius key and network, and quietly change behaviour when either is
+// missing — which is how a suite starts lying about what it covers.
+const accountKindMock = vi.fn();
+vi.mock('../src/data/helius.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/data/helius.js')>(
+    '../src/data/helius.js',
+  );
+  return {
+    ...actual,
+    HeliusClient: {
+      ...actual.HeliusClient,
+      fromConfig: () => ({ accountKind: (a: string) => accountKindMock(a) }),
+    },
+  };
 });
 
 const { Bot } = await import('grammy');
@@ -66,9 +86,26 @@ const cbq = (data: string, chatId = 1) => ({
   },
 });
 
-beforeEach(() => {
+let watchDir: string;
+
+beforeEach(async () => {
   analyzeMock.mockReset();
   analyzeMock.mockResolvedValue(makeReport());
+  accountKindMock.mockReset();
+  accountKindMock.mockResolvedValue('mint');
+
+  // A watchlist that survives between tests made "/track" report "already on
+  // your list" on a re-run, so an earlier version of these tests passed only
+  // because of the order they happened to run in.
+  watchDir = await mkdtemp(join(tmpdir(), 'xray-handlers-'));
+  process.env.WATCHLIST_PATH = join(watchDir, 'watchlist.json');
+  const watchlist = await import('../src/data/watchlist.js');
+  watchlist.__resetForTests();
+});
+
+afterEach(async () => {
+  delete process.env.WATCHLIST_PATH;
+  await rm(watchDir, { recursive: true, force: true });
 });
 
 const text = (c: ApiCall) => String(c.payload.text ?? '');
@@ -258,3 +295,67 @@ describe('tracking a wallet directly', () => {
     expect(text(calls[calls.length - 1]!)).toMatch(/stopped tracking/i);
   });
 })
+
+describe('paste a wallet, pick a filter, end up tracking it', () => {
+  const WALLET = '7Mwof5tBvNPC6e1zwtHRQynqXcuDpqqbeY9vSZLW2Bv8';
+
+  /** Buttons on the last message the bot sent or edited. */
+  const buttons = (calls: ApiCall[]) => {
+    const kb = calls[calls.length - 1]!.payload.reply_markup as
+      | { inline_keyboard: { text: string; callback_data?: string }[][] }
+      | undefined;
+    return (kb?.inline_keyboard ?? []).flat();
+  };
+
+  it('walks the whole flow and records the chosen filter', async () => {
+    // Every step of this is a place a feature can run, log, throw nothing, and
+    // still do nothing — which happened three times in this codebase already.
+    // Driving the real handlers is the only way to know the buttons connect.
+    const { AnalysisError } = await import('../src/engine/analyze.js');
+    analyzeMock.mockRejectedValue(new AnalysisError('No trading pair found for that address.'));
+    accountKindMock.mockResolvedValue('wallet');
+
+    const { bot, calls } = makeBot();
+    await bot.handleUpdate(msg(WALLET));
+
+    // 1. It recognised a wallet and offered the button.
+    expect(text(calls[calls.length - 1]!)).toMatch(/wallet, not a coin/i);
+    const track = buttons(calls).find((b) => b.text.includes('Track'));
+    expect(track?.callback_data).toBeTruthy();
+
+    // 2. Tapping it offers the filters.
+    calls.length = 0;
+    await bot.handleUpdate(cbq(track!.callback_data!));
+    const filters = buttons(calls).map((b) => b.text);
+    expect(filters.some((t) => /Buys/i.test(t))).toBe(true);
+    expect(filters.some((t) => /Sells/i.test(t))).toBe(true);
+    expect(filters.some((t) => /Transfers/i.test(t))).toBe(true);
+    expect(filters.some((t) => /Everything/i.test(t))).toBe(true);
+
+    // 3. Choosing one tracks the wallet with that filter.
+    const sells = buttons(calls).find((b) => /Sells/i.test(b.text))!;
+    calls.length = 0;
+    await bot.handleUpdate(cbq(sells.callback_data!));
+    expect(text(calls[calls.length - 1]!)).toMatch(/now tracking/i);
+
+    const { listWatched, filterOf } = await import('../src/data/watchlist.js');
+    const watched = await listWatched(1);
+    const entry = watched.find((e) => e.wallet === WALLET);
+    expect(entry, 'the wallet should be on the list').toBeTruthy();
+    expect(filterOf(entry!)).toBe('sells');
+  });
+
+  it('every button in the flow fits the 64-byte callback limit', async () => {
+    // A Solana address is 44 chars, so this flow is exactly where that limit
+    // gets breached — and Telegram rejects the whole message, not the button.
+    const { trackPromptKeyboard, trackFilterKeyboard } = await import('../src/bot/keyboards.js');
+    const all = [
+      ...trackPromptKeyboard('abc123').inline_keyboard.flat(),
+      ...trackFilterKeyboard('abc123').inline_keyboard.flat(),
+    ];
+    expect(all.length).toBeGreaterThan(3);
+    for (const b of all) {
+      expect(Buffer.byteLength(b.callback_data ?? '', 'utf8')).toBeLessThanOrEqual(64);
+    }
+  });
+});

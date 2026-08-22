@@ -166,3 +166,43 @@ describe('sparkline series', () => {
     expect(series).toHaveLength(3);
   });
 });
+
+describe('secrets never reach the log', () => {
+  it('redacts a Telegram bot token from a URL path', async () => {
+    // Telegram puts the token in the PATH, so the query-parameter rules never
+    // saw it. One timed-out startup call wrote the whole token to disk.
+    const { redactUrl } = await import('../src/util/http.js');
+    const url = 'https://api.telegram.org/bot8993736629:AAGQHgYnXH8sNTtxFv8EY/setMyCommands';
+    const safe = redactUrl(url);
+    expect(safe).not.toContain('AAGQHgYnXH8sNTtxFv8EY');
+    expect(safe).not.toContain('8993736629');
+    expect(safe).toContain('api.telegram.org/bot***');
+  });
+
+  it('still redacts api keys in query strings and Helius paths', async () => {
+    const { redactUrl } = await import('../src/util/http.js');
+    expect(redactUrl('https://x.com/v1?api-key=SECRET123')).not.toContain('SECRET123');
+    expect(redactUrl('https://mainnet.helius-rpc.com/SECRET123')).not.toContain('SECRET123');
+  });
+
+  it('scrubs a nested third-party error, not just our own', async () => {
+    // grammy's errors are not ours to redact at construction, and they nest the
+    // failing URL a couple of levels down.
+    const { log } = await import('../src/util/log.js');
+    const lines: string[] = [];
+    const orig = process.stdout.write.bind(process.stdout);
+    // pino-pretty writes through stdout in dev; capture whatever comes out.
+    (process.stdout as unknown as { write: (s: string) => boolean }).write = (s: string) => {
+      lines.push(String(s));
+      return true;
+    };
+    try {
+      const err = new Error('Network request failed!') as Error & { error?: unknown };
+      err.error = { message: 'request to https://api.telegram.org/botSECRETTOKEN/x failed' };
+      log.error({ err }, 'boom');
+    } finally {
+      (process.stdout as unknown as { write: typeof orig }).write = orig;
+    }
+    expect(lines.join('')).not.toContain('SECRETTOKEN');
+  });
+});
