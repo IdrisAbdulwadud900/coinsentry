@@ -2,7 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { detectBuys, detectBuysAcross } from '../src/engine/walletWatch.js';
+import {
+  detectBuys,
+  detectBuysAcross,
+  detectActivity,
+  matchesFilter,
+  mergeBuysByMint,
+} from '../src/engine/walletWatch.js';
 import type { HeliusTx } from '../src/data/helius.js';
 
 const W = 'Watched11111111111111111111111111111111111';
@@ -215,5 +221,73 @@ describe('only watchable wallets reach the list', () => {
     expect(isWatchableWallet('too-short')).toBe(false);
     // 0 and O are not in the base58 alphabet.
     expect(isWatchableWallet('0OOO0OOO0OOO0OOO0OOO0OOO0OOO0OOO')).toBe(false);
+  });
+});
+
+describe('activity kinds', () => {
+  const WALLET = W;
+  /** One transaction moving `sol` SOL and `token` tokens for the wallet. */
+  const txWith = ({ sol, token }: { sol: number; token: number }): HeliusTx =>
+    tx({
+      accountData: [
+        {
+          account: W,
+          nativeBalanceChange: Math.round(sol * 1e9),
+          tokenBalanceChanges: [
+            {
+              userAccount: W,
+              tokenAccount: 'ta',
+              mint: MINT,
+              rawTokenAmount: { tokenAmount: String(Math.round(token * 1e6)), decimals: 6 },
+            },
+          ],
+        },
+      ],
+    } as Partial<HeliusTx>);
+
+  it('separates a buy from a transfer in by the SOL leg', () => {
+    // Both raise the token balance. Only one of them cost anything.
+    const bought = detectActivity(
+      txWith({ sol: -0.5, token: +1000 }),
+      WALLET,
+    );
+    const airdropped = detectActivity(txWith({ sol: 0, token: +1000 }), WALLET);
+    expect(bought[0]!.kind).toBe('buy');
+    expect(airdropped[0]!.kind).toBe('transfer-in');
+  });
+
+  it('separates a sell from a transfer out by the SOL leg', () => {
+    // A wallet moving its position to an alt is not a sale — that distinction
+    // is the whole supply-relay pattern.
+    const sold = detectActivity(txWith({ sol: +0.5, token: -1000 }), WALLET);
+    const sent = detectActivity(txWith({ sol: 0, token: -1000 }), WALLET);
+    expect(sold[0]!.kind).toBe('sell');
+    expect(sent[0]!.kind).toBe('transfer-out');
+  });
+
+  it('reports amounts as magnitudes, with direction in the kind', () => {
+    const sold = detectActivity(txWith({ sol: +0.5, token: -1000 }), WALLET);
+    expect(sold[0]!.tokenAmount).toBeGreaterThan(0);
+    expect(sold[0]!.solSpent).toBeGreaterThan(0);
+  });
+
+  it('filters map to the kinds they name', () => {
+    expect(matchesFilter('buy', 'buys')).toBe(true);
+    expect(matchesFilter('sell', 'buys')).toBe(false);
+    expect(matchesFilter('transfer-out', 'transfers')).toBe(true);
+    expect(matchesFilter('transfer-in', 'transfers')).toBe(true);
+    for (const k of ['buy', 'sell', 'transfer-in', 'transfer-out'] as const) {
+      expect(matchesFilter(k, 'all')).toBe(true);
+    }
+  });
+
+  it('never merges a buy and a sell of the same token', () => {
+    // Two decisions, not one — netting them would report a sale as a purchase.
+    const merged = mergeBuysByMint([
+      { wallet: WALLET, mint: 'M', tokenAmount: 100, solSpent: 1, ts: 1, signature: 'a', kind: 'buy' },
+      { wallet: WALLET, mint: 'M', tokenAmount: 100, solSpent: 1, ts: 2, signature: 'b', kind: 'sell' },
+    ]);
+    expect(merged).toHaveLength(2);
+    expect(merged.map((m) => m.kind).sort()).toEqual(['buy', 'sell']);
   });
 });

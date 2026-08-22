@@ -3,9 +3,15 @@ import { log } from '../util/log.js';
 import { HeliusClient } from '../data/helius.js';
 import { getToken as getJupToken } from '../data/jupiter.js';
 import { NativePriceOracle } from '../data/nativePrice.js';
-import { isWatchableWallet, listWatched, setCursor, type WatchEntry } from '../data/watchlist.js';
+import {
+  filterOf,
+  isWatchableWallet,
+  listWatched,
+  setCursor,
+  type WatchEntry,
+} from '../data/watchlist.js';
 import { recordBuys, findConvergence, hasRecentBuy, type Convergence } from '../data/buyLog.js';
-import { detectBuysAcross, mergeBuysByMint, type WalletBuy } from './walletWatch.js';
+import { detectActivityAcross, matchesFilter, mergeBuysByMint, type WalletBuy } from './walletWatch.js';
 
 /**
  * Checks watched wallets for new purchases.
@@ -87,23 +93,34 @@ async function checkOne(
   }
 
   const { txs } = await helius.hydrate(sigs.map((s) => s.signature));
-  const raw = detectBuysAcross(txs, entry.wallet);
+  const filter = filterOf(entry);
+  const raw = detectActivityAcross(txs, entry.wallet).filter((a) => matchesFilter(a.kind, filter));
   await setCursor(entry.chatId, entry.wallet, newest);
 
   const buys = mergeBuysByMint(raw);
 
   const out: BuyAlert[] = [];
   for (const buy of buys) {
-    if (buy.solSpent < config.WATCH_MIN_SOL) continue;
+    // A size floor only makes sense where SOL changed hands. A transfer moves
+    // no SOL by definition, so applying it there would silently discard every
+    // transfer the user asked to see.
+    const priced = buy.kind === 'buy' || buy.kind === 'sell';
+    if (priced && buy.solSpent < config.WATCH_MIN_SOL) continue;
 
     // Suppressed across cycles too — the cooldown is what stops a wallet that
     // keeps adding over an hour from alerting on every poll.
-    const cooling = await hasRecentBuy(
-      entry.chatId,
-      entry.wallet,
-      buy.mint,
-      config.ALERT_COOLDOWN_MINUTES * 60,
-    );
+    // Scoped to buys: the cooldown exists to stop a wallet adding to one
+    // position all hour from alerting every poll. A sell of that same token is
+    // a different event and must not be swallowed by it.
+    const cooling =
+      buy.kind !== 'buy'
+        ? false
+        : await hasRecentBuy(
+            entry.chatId,
+            entry.wallet,
+            buy.mint,
+            config.ALERT_COOLDOWN_MINUTES * 60,
+          );
 
     const dedupe = `${entry.chatId}:${buy.signature}:${buy.mint}`;
     if (alerted.has(dedupe)) continue;
@@ -113,11 +130,18 @@ async function checkOne(
     const solPrice = oracle?.at(buy.ts) ?? 0;
     const symbol = meta?.symbol ?? buy.mint.slice(0, 6);
 
-    // Recorded even when the alert is suppressed: the buy still happened, and
-    // it still counts toward convergence with other wallets.
-    await recordBuys([
-      { chatId: entry.chatId, wallet: entry.wallet, mint: buy.mint, symbol, solSpent: buy.solSpent, ts: buy.ts },
-    ]);
+    // Buys only. Convergence means "two tracked wallets BOUGHT the same coin",
+    // and now that the poller also sees sells and transfers, logging those here
+    // would let two wallets DUMPING a token raise a signal that reads as them
+    // accumulating it.
+    //
+    // Recorded even when the alert itself is suppressed: the buy still
+    // happened, and it still counts toward convergence.
+    if (buy.kind === 'buy') {
+      await recordBuys([
+        { chatId: entry.chatId, wallet: entry.wallet, mint: buy.mint, symbol, solSpent: buy.solSpent, ts: buy.ts },
+      ]);
+    }
 
     if (cooling) continue;
 
@@ -133,7 +157,8 @@ async function checkOne(
       // must not read as safe.
       freezeAuthorityActive: meta?.audit?.freezeAuthorityDisabled === false,
       mintAuthorityActive: meta?.audit?.mintAuthorityDisabled === false,
-      convergence: await findConvergence(entry.chatId, buy.mint),
+      // Only a purchase can converge with other purchases.
+      convergence: buy.kind === 'buy' ? await findConvergence(entry.chatId, buy.mint) : null,
     });
   }
 

@@ -5,7 +5,7 @@ import { dexScreenerUrl } from '../util/format.js';
 import type { EntrySort } from '../engine/entries.js';
 import type { PageInfo } from './render/screens.js';
 
-export type View = 'home' | 'floor' | 'first' | 'winners' | 'play' | 'diamond' | 'dev' | 'relay' | 'risk' | 'wallet' | 'copy' | 'track';
+export type View = 'home' | 'floor' | 'first' | 'winners' | 'play' | 'trackask' | 'trackset' | 'diamond' | 'dev' | 'relay' | 'risk' | 'wallet' | 'copy' | 'track';
 
 /**
  * Callback payloads are limited to 64 bytes, so everything is positional and
@@ -160,4 +160,25 @@ export function walletPickerRow(
   });
   kb.row();
   return kb;
+}
+
+/**
+ * Offered when someone pastes a wallet rather than a coin.
+ *
+ * The address itself never goes into the payload — 44 characters would blow the
+ * 64-byte callback limit on its own — so the wallet is held server-side under a
+ * short id, the same trick the report screens use for wallet buttons.
+ */
+export function trackPromptKeyboard(promptId: string): InlineKeyboard {
+  return new InlineKeyboard().text('📌 Track this wallet', cb(promptId, 'trackask'));
+}
+
+/** What the watcher should report. */
+export function trackFilterKeyboard(promptId: string): InlineKeyboard {
+  return new InlineKeyboard()
+    .text('🟢 Buys only', cb(promptId, 'trackset', 0, 'buys'))
+    .text('🔴 Sells only', cb(promptId, 'trackset', 0, 'sells'))
+    .row()
+    .text('📤 Transfers only', cb(promptId, 'trackset', 0, 'transfers'))
+    .text('⚡ Everything', cb(promptId, 'trackset', 0, 'all'));
 }

@@ -129,3 +129,35 @@ export function checkCooldown(userId: number): number {
 export function markRun(userId: number): void {
   lastRun.set(userId, Date.now());
 }
+
+/**
+ * Wallets a user has pasted and not yet decided about.
+ *
+ * Kept here, keyed by a short id, because a Solana address is 44 characters and
+ * Telegram allows 64 bytes of callback data in total — putting the address in
+ * the button would leave no room for the rest and fail at send time. The report
+ * screens solve the same problem by addressing wallets by index.
+ */
+const TRACK_PROMPT_TTL_MS = config.CACHE_TTL_SECONDS * 1000 * 4;
+
+const trackPrompts = new Map<string, { wallet: string; chatId: number; at: number }>();
+
+export function createTrackPrompt(wallet: string, chatId: number): string {
+  const id = makeId();
+  // Bounded, and old entries expire, so an abandoned prompt cannot pin memory.
+  for (const [key, v] of trackPrompts) {
+    if (Date.now() - v.at > TRACK_PROMPT_TTL_MS) trackPrompts.delete(key);
+  }
+  trackPrompts.set(id, { wallet, chatId, at: Date.now() });
+  return id;
+}
+
+export function getTrackPrompt(id: string, chatId: number): string | null {
+  const hit = trackPrompts.get(id);
+  if (!hit || hit.chatId !== chatId) return null;
+  if (Date.now() - hit.at > TRACK_PROMPT_TTL_MS) {
+    trackPrompts.delete(id);
+    return null;
+  }
+  return hit.wallet;
+}

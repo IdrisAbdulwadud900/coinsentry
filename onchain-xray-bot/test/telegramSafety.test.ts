@@ -345,3 +345,44 @@ describe('alerts are valid Telegram HTML too', () => {
     checkHtml('empty watchlist', renderWatchlist([]));
   });
 });
+
+describe('alerts name what actually happened', () => {
+  const base = {
+    wallet: '7Mwof5tBvNPC6e1zwtHRQynqXcuDpqqbeY9vSZLW2Bv8',
+    mint: 'J8PSdNP3QewKq2Z1JJJFDMaqF7KcaiJhR7gbr5KZpump',
+    symbol: 'A&B<>', name: 'Tom & Jerry <script>',
+    tokenAmount: 1000, solSpent: 2, usdSpent: 400, mcapUsd: 42_000,
+    note: 'Added by hand', signature: '5'.repeat(64),
+  };
+
+  it('says sold for a sell, not bought', async () => {
+    // A watcher following sells that reads "bought" states the opposite of
+    // what happened, which is worse than sending nothing.
+    const { renderBuyAlert } = await import('../src/bot/render/screens.js');
+    const html = renderBuyAlert({ ...base, kind: 'sell' });
+    expect(html).toContain('sold');
+    expect(html).not.toContain('bought');
+    checkHtml('sell alert', html);
+  });
+
+  it('distinguishes tokens sent out from tokens received', async () => {
+    const { renderBuyAlert } = await import('../src/bot/render/screens.js');
+    expect(renderBuyAlert({ ...base, kind: 'transfer-out' })).toContain('sent out');
+    expect(renderBuyAlert({ ...base, kind: 'transfer-in' })).toContain('received');
+  });
+
+  it('still reads as a buy when no kind is given', async () => {
+    // Older callers pass no kind; they were all buys.
+    const { renderBuyAlert } = await import('../src/bot/render/screens.js');
+    expect(renderBuyAlert(base)).toContain('bought');
+  });
+
+  it('shows each watch filter in the list', async () => {
+    const { renderWatchlist } = await import('../src/bot/render/screens.js');
+    const html = renderWatchlist([
+      { wallet: base.wallet, note: 'n', addedAt: 1_700_000_000, filter: 'sells' },
+    ]);
+    expect(html).toContain('sells');
+    checkHtml('watchlist with filter', html);
+  });
+});

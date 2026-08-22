@@ -748,9 +748,19 @@ export function renderBuyAlert(a: {
   freezeAuthorityActive?: boolean;
   mintAuthorityActive?: boolean;
   convergence?: { wallets: string[]; totalSolSpent: number; firstTs: number } | null;
+  kind?: 'buy' | 'sell' | 'transfer-in' | 'transfer-out';
 }): string {
   const sym = esc(a.symbol.trim().toUpperCase());
   const conv = a.convergence;
+  // The verb has to match what happened. A watcher following sells that reads
+  // "bought" is worse than no alert at all — it says the opposite of the truth.
+  const kind = a.kind ?? 'buy';
+  const VERB = {
+    buy: { icon: '🔔', word: 'bought' },
+    sell: { icon: '🔻', word: 'sold' },
+    'transfer-in': { icon: '📥', word: 'received' },
+    'transfer-out': { icon: '📤', word: 'sent out' },
+  }[kind];
 
   const header = conv
     ? [
@@ -758,7 +768,7 @@ export function renderBuyAlert(a: {
         '',
         `<i>Converging over ${duration(Math.max(0, Math.floor(Date.now() / 1000) - conv.firstTs))} ${ICON.bullet} ${conv.totalSolSpent.toFixed(2)} SOL between them</i>`,
       ]
-    : [`🔔 <b>${esc(shortAddr(a.wallet, 4, 4))}</b> bought <b>$${sym}</b>`];
+    : [`${VERB.icon} <b>${esc(shortAddr(a.wallet, 4, 4))}</b> ${VERB.word} <b>$${sym}</b>`];
 
   const size = `<code>${esc(`${a.solSpent.toFixed(3)} SOL`)}</code>${
     a.usdSpent > 0 ? ` ${ICON.bullet} ${usd(a.usdSpent)}` : ''
@@ -791,7 +801,16 @@ export function renderBuyAlert(a: {
 }
 
 /** The user's tracked wallets. */
-export function renderWatchlist(entries: { wallet: string; note: string; addedAt: number }[]): string {
+const WATCH_FILTER_LABEL: Record<string, string> = {
+  buys: '🟢 buys',
+  sells: '🔴 sells',
+  transfers: '📤 transfers',
+  all: '⚡ everything',
+};
+
+export function renderWatchlist(
+  entries: { wallet: string; note: string; addedAt: number; filter?: string }[],
+): string {
   if (entries.length === 0) {
     return [
       heading('📌', 'WATCHLIST'),
@@ -805,7 +824,9 @@ export function renderWatchlist(entries: { wallet: string; note: string; addedAt
     .map(
       (e, i) =>
         `${rankBadge(i)} <a href="${walletUrl('solana', e.wallet)}">${esc(shortAddr(e.wallet, 4, 4))}</a>\n` +
-        `   <i>${esc(e.note)} ${ICON.bullet} added ${ago(e.addedAt)}</i>`,
+        // The filter is shown because it decides whether silence means "no
+        // activity" or "activity you asked not to hear about".
+        `   <i>${esc(e.note)} ${ICON.bullet} ${esc(WATCH_FILTER_LABEL[e.filter ?? 'buys'] ?? 'buys')} ${ICON.bullet} added ${ago(e.addedAt)}</i>`,
     )
     .join('\n\n');
   return clampMessage(

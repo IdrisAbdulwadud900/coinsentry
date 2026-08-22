@@ -24,7 +24,9 @@ import {
   listWatched,
   isWatched,
   isWatchableWallet,
+  setWatchFilter,
 } from '../data/watchlist.js';
+import type { WatchFilter } from '../engine/walletWatch.js';
 import {
   homeKeyboard,
   listKeyboard,
@@ -32,7 +34,10 @@ import {
   simpleBack,
   walletPickerRow,
   parseCb,
+  trackPromptKeyboard,
+  trackFilterKeyboard,
   type View,
+  type ParsedCb,
 } from './keyboards.js';
 import {
   createSession,
@@ -41,6 +46,8 @@ import {
   cacheAnalysis,
   checkCooldown,
   markRun,
+  createTrackPrompt,
+  getTrackPrompt,
   type Session,
 } from './session.js';
 import { progressCard, ICON } from './ui.js';
@@ -64,7 +71,7 @@ const WELCOME = [
   `${ICON.diamond} <b>Diamond hands</b> — who rode it 3x, 10x, 100x before selling anything`,
   '📌 <b>Track</b> a Solana wallet and get told when it buys something new',
   '',
-  `<b>${'/'}track &lt;wallet&gt;</b> watches a wallet directly — or paste a wallet address and I will offer. Two tracked wallets buying the same coin raises a louder alert.`,
+  `<b>Paste a wallet address</b> and I will offer to watch it — buys, sells, transfers, or all three. Two tracked wallets buying the same coin raises a louder alert.`,
   `<b>${'/'}deep &lt;contract&gt;</b> replays every transaction instead — much slower, but it is what uncovers supply relays and the dev's linked wallets.`,
   '',
   '<b>Chains:</b> Solana, Ethereum, BNB Chain, Base.',
@@ -81,12 +88,12 @@ const HELP = [
   '',
   '<b>Confidence vs proof</b> — dev-cluster links are inference. A shared funder is often just an exchange withdrawal, and a high fan-in address is usually a CEX deposit. Both are flagged rather than hidden.',
   '',
-  '<b>Tracking</b> — a tracked wallet is checked every couple of minutes, and you get a message when it buys something new. The first check only records where it is, so nothing fires for trades it already made. Two tracked wallets buying the same coin raises a louder alert than either alone.',
+  '<b>Tracking</b> — paste a wallet address and pick what to hear about: 🟢 buys, 🔴 sells, 📤 transfers, or ⚡ everything. Transfers are worth watching on their own: tokens leaving without a sale is how a position gets handed to another address. A tracked wallet is checked every couple of minutes, and the first check only records where it is, so nothing fires for trades it already made. Two tracked wallets BUYING the same coin raises a louder alert — selling never converges, since agreeing to leave is not agreeing to enter.',
   '',
   '<b>Commands</b>',
   '<code>/start</code> — the welcome card',
   '<code>/help</code> — this page',
-  '<code>/track &lt;wallet&gt;</code> — watch a Solana wallet',
+  '<code>/track &lt;wallet&gt;</code> — watch a Solana wallet (buys; paste the address instead to choose)',
   '<code>/untrack &lt;wallet&gt;</code> — stop watching it',
   '<code>/watchlist</code> — everything you are watching',
   '<code>/deep &lt;contract&gt;</code> — replay every transaction',
@@ -183,6 +190,14 @@ export function registerHandlers(bot: Bot): void {
       return;
     }
 
+    // The track flow is not report navigation — its id points at a pasted
+    // wallet, not a session, so it is handled before the session lookup that
+    // would otherwise reject it as an expired report.
+    if (parsed.view === 'trackask' || parsed.view === 'trackset') {
+      await handleTrackFlow(ctx, parsed, chatId);
+      return;
+    }
+
     const session = getSession(parsed.id, chatId);
     if (!session) {
       await ctx.answerCallbackQuery({
@@ -259,6 +274,84 @@ async function trackWallet(chatId: number, wallet: string, note: string): Promis
       return `${ICON.warn} That wallet cannot be tracked.`;
   }
 }
+
+/**
+ * The two taps between pasting a wallet and watching it: choose to track, then
+ * choose what to hear about.
+ */
+async function handleTrackFlow(ctx: Context, parsed: ParsedCb, chatId: number): Promise<void> {
+  const wallet = getTrackPrompt(parsed.id, chatId);
+  if (!wallet) {
+    await ctx.answerCallbackQuery({
+      text: 'That prompt expired. Paste the wallet again.',
+      show_alert: true,
+    });
+    return;
+  }
+
+  if (parsed.view === 'trackask') {
+    await ctx.answerCallbackQuery();
+    await ctx.api
+      .editMessageText(
+        chatId,
+        ctx.callbackQuery!.message!.message_id,
+        [
+          `📌 <b>What should I tell you about?</b>`,
+          '',
+          `<code>${esc(wallet)}</code>`,
+          '',
+          `<i>🟢 Buys — it opened or added to a position</i>`,
+          `<i>🔴 Sells — it took money off the table</i>`,
+          `<i>📤 Transfers — tokens moved in or out without a trade, which is how a position gets handed to another address</i>`,
+          `<i>⚡ Everything — all three</i>`,
+        ].join('\n'),
+        { ...SEND_OPTS, reply_markup: trackFilterKeyboard(parsed.id) },
+      )
+      .catch(() => undefined);
+    return;
+  }
+
+  const filter = parsed.arg as WatchFilter;
+  const res = await watchWallet(chatId, wallet, 'Added by hand', filter);
+  if (res === 'added' || res === 'duplicate') {
+    // Choosing again on a wallet already watched changes what it reports rather
+    // than refusing — that is what tapping a different filter plainly means.
+    if (res === 'duplicate') await setWatchFilter(chatId, wallet, filter);
+    await ctx.answerCallbackQuery({ text: `Tracking ${FILTER_LABEL[filter]}.` });
+    await ctx.api
+      .editMessageText(
+        chatId,
+        ctx.callbackQuery!.message!.message_id,
+        [
+          `📌 <b>Now tracking</b> ${FILTER_LABEL[filter]}`,
+          '',
+          `<code>${esc(wallet)}</code>`,
+          '',
+          `<i>The first check only records where the wallet is now, so nothing fires for trades it already made.</i>`,
+          '',
+          `<code>/watchlist</code> to see the list ${ICON.bullet} <code>/untrack ${esc(wallet)}</code> to stop.`,
+        ].join('\n'),
+        SEND_OPTS,
+      )
+      .catch(() => undefined);
+    return;
+  }
+
+  await ctx.answerCallbackQuery({
+    text:
+      res === 'full'
+        ? `Watchlist is full (${config.MAX_WATCHED_WALLETS}). Remove one with /untrack first.`
+        : 'Only Solana wallets can be tracked.',
+    show_alert: true,
+  });
+}
+
+const FILTER_LABEL: Record<WatchFilter, string> = {
+  buys: 'buys',
+  sells: 'sells',
+  transfers: 'transfers',
+  all: 'buys, sells and transfers',
+};
 
 async function runAnalysis(
   ctx: Context,
@@ -348,13 +441,20 @@ async function runAnalysis(
         ? await helius.accountKind(address)
         : 'unknown';
     if (kind === 'wallet') {
-      const offer =
-        `📌 <b>That looks like a wallet, not a coin.</b>\n\n` +
-        `<i>I can watch it and tell you when it buys something new.</i>\n\n` +
-        `<code>/track ${esc(address)}</code>`;
+      const promptId = createTrackPrompt(address, chatId);
+      const offer = [
+        `📌 <b>That is a wallet, not a coin.</b>`,
+        '',
+        `<code>${esc(address)}</code>`,
+        '',
+        `<i>I can watch it and message you when it trades. Tap below to pick what you want to hear about.</i>`,
+      ].join('\n');
       await ctx.api
-        .editMessageText(chatId, status.message_id, offer, SEND_OPTS)
-        .catch(() => ctx.reply(offer, SEND_OPTS));
+        .editMessageText(chatId, status.message_id, offer, {
+          ...SEND_OPTS,
+          reply_markup: trackPromptKeyboard(promptId),
+        })
+        .catch(() => ctx.reply(offer, { ...SEND_OPTS, reply_markup: trackPromptKeyboard(promptId) }));
       return;
     }
 
