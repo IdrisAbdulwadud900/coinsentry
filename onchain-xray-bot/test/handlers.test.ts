@@ -224,3 +224,37 @@ describe('tracking is offered only where it can work', () => {
   });
 });
 
+
+
+describe('tracking a wallet directly', () => {
+  it('/track with no argument says how to use it', async () => {
+    const { bot, calls } = makeBot();
+    await bot.handleUpdate(msg('/track'));
+    expect(text(calls[0]!)).toContain('/track');
+  });
+
+  it('/track refuses an EVM address and says why', async () => {
+    // The watcher reads Helius, which cannot see EVM addresses at all — so
+    // accepting one would put a wallet on the list that can never alert.
+    const { bot, calls } = makeBot();
+    await bot.handleUpdate(msg('/track 0x8367d463abda0b0270e81e6e5f5d701f8d3cf82d'));
+    expect(text(calls[0]!)).toMatch(/only solana/i);
+  });
+
+  it('/track accepts a Solana wallet and explains the baseline', async () => {
+    // The first poll only records where the wallet is, so a new tracker must
+    // not imply it will replay trades the wallet already made.
+    const { bot, calls } = makeBot();
+    await bot.handleUpdate(msg('/track 7Mwof5tBvNPC6e1zwtHRQynqXcuDpqqbeY9vSZLW2Bv8'));
+    const reply = text(calls[0]!);
+    expect(reply).toContain('Now tracking');
+    expect(reply).toMatch(/baseline/i);
+  });
+
+  it('/untrack removes what /track added', async () => {
+    const { bot, calls } = makeBot();
+    await bot.handleUpdate(msg('/track 7Mwof5tBvNPC6e1zwtHRQynqXcuDpqqbeY9vSZLW2Bv8'));
+    await bot.handleUpdate(msg('/untrack 7Mwof5tBvNPC6e1zwtHRQynqXcuDpqqbeY9vSZLW2Bv8'));
+    expect(text(calls[calls.length - 1]!)).toMatch(/stopped tracking/i);
+  });
+})

@@ -18,7 +18,13 @@ import {
   renderWatchlist,
   paginate,
 } from './render/screens.js';
-import { watchWallet, unwatchWallet, listWatched, isWatched } from '../data/watchlist.js';
+import {
+  watchWallet,
+  unwatchWallet,
+  listWatched,
+  isWatched,
+  isWatchableWallet,
+} from '../data/watchlist.js';
 import {
   homeKeyboard,
   listKeyboard,
@@ -41,6 +47,7 @@ import { progressCard, ICON } from './ui.js';
 import { sortEarlyBuyers, type EntrySort } from '../engine/entries.js';
 import { rankBadge, esc } from '../util/format.js';
 import { CHAINS } from '../data/chains.js';
+import { HeliusClient } from '../data/helius.js';
 
 const SEND_OPTS = {
   parse_mode: 'HTML' as const,
@@ -57,6 +64,7 @@ const WELCOME = [
   `${ICON.diamond} <b>Diamond hands</b> — who rode it 3x, 10x, 100x before selling anything`,
   '📌 <b>Track</b> a Solana wallet and get told when it buys something new',
   '',
+  `<b>${'/'}track &lt;wallet&gt;</b> watches a wallet directly — or paste a wallet address and I will offer. Two tracked wallets buying the same coin raises a louder alert.`,
   `<b>${'/'}deep &lt;contract&gt;</b> replays every transaction instead — much slower, but it is what uncovers supply relays and the dev's linked wallets.`,
   '',
   '<b>Chains:</b> Solana, Ethereum, BNB Chain, Base.',
@@ -73,10 +81,16 @@ const HELP = [
   '',
   '<b>Confidence vs proof</b> — dev-cluster links are inference. A shared funder is often just an exchange withdrawal, and a high fan-in address is usually a CEX deposit. Both are flagged rather than hidden.',
   '',
+  '<b>Tracking</b> — a tracked wallet is checked every couple of minutes, and you get a message when it buys something new. The first check only records where it is, so nothing fires for trades it already made. Two tracked wallets buying the same coin raises a louder alert than either alone.',
+  '',
   '<b>Commands</b>',
   '<code>/start</code> — the welcome card',
   '<code>/help</code> — this page',
-  '<i>Anything else that looks like an address is treated as one.</i>',
+  '<code>/track &lt;wallet&gt;</code> — watch a Solana wallet',
+  '<code>/untrack &lt;wallet&gt;</code> — stop watching it',
+  '<code>/watchlist</code> — everything you are watching',
+  '<code>/deep &lt;contract&gt;</code> — replay every transaction',
+  '<i>Anything else that looks like an address is treated as one — paste a wallet and I will offer to track it.</i>',
 ].join('\n');
 
 export function registerHandlers(bot: Bot): void {
@@ -105,6 +119,18 @@ export function registerHandlers(bot: Bot): void {
   bot.command('watchlist', async (ctx) => {
     const entries = await listWatched(ctx.chat.id);
     await ctx.reply(renderWatchlist(entries), SEND_OPTS);
+  });
+
+  bot.command('track', async (ctx) => {
+    const target = extractAddress(ctx.match ?? '');
+    if (!target) {
+      await ctx.reply(
+        'Send <code>/track &lt;wallet&gt;</code> to be told when it buys something new.',
+        SEND_OPTS,
+      );
+      return;
+    }
+    await ctx.reply(await trackWallet(ctx.chat.id, target, 'Added by hand'), SEND_OPTS);
   });
 
   bot.command('untrack', async (ctx) => {
@@ -203,6 +229,37 @@ export function registerHandlers(bot: Bot): void {
 
 // --- Analysis run ------------------------------------------------------------
 
+/**
+ * Adds a wallet to the watchlist and says what happened, in one place.
+ *
+ * The button and the command share this so they cannot drift into telling the
+ * user different things about the same list.
+ */
+async function trackWallet(chatId: number, wallet: string, note: string): Promise<string> {
+  if (!isWatchableWallet(wallet)) {
+    return (
+      `${ICON.warn} <b>Only Solana wallets can be tracked.</b>\n\n` +
+      `<i>The watcher reads Helius, which cannot see EVM addresses. Following a Base or BNB Chain wallet needs a per-chain log scan this bot does not run yet.</i>`
+    );
+  }
+
+  const res = await watchWallet(chatId, wallet, note);
+  switch (res) {
+    case 'added':
+      return (
+        `📌 <b>Now tracking</b> <code>${esc(wallet)}</code>\n\n` +
+        `<i>You will get a message when it buys something new. First check establishes a baseline, so nothing fires for trades it already made.</i>\n\n` +
+        `<code>/watchlist</code> to see the list ${ICON.bullet} <code>/untrack ${esc(wallet)}</code> to stop.`
+      );
+    case 'duplicate':
+      return `Already on your list. <code>/watchlist</code> to see it.`;
+    case 'full':
+      return `${ICON.warn} Watchlist is full (${config.MAX_WATCHED_WALLETS}). Remove one with <code>/untrack</code> first.`;
+    default:
+      return `${ICON.warn} That wallet cannot be tracked.`;
+  }
+}
+
 async function runAnalysis(
   ctx: Context,
   address: string,
@@ -277,6 +334,29 @@ async function runAnalysis(
         : `${ICON.warn} <b>The scan failed.</b>\n\n<i>${esc(err instanceof Error ? err.message : String(err))}</i>`;
 
     if (!(err instanceof AnalysisError)) log.error({ err, address }, 'analysis failed');
+
+    // A wallet address is not a broken contract address — it is a different
+    // intention. Answering "no trading pair found" told the user their input
+    // was wrong when it was simply not a coin, and buried the one thing the
+    // bot can do with it.
+    // Only when the chain itself confirms it is a wallet. A Solana mint has the
+    // same shape, so guessing from the address would tell every user who pastes
+    // an unlaunched token that they pasted a wallet.
+    const helius = HeliusClient.fromConfig();
+    const kind =
+      err instanceof AnalysisError && isWatchableWallet(address) && helius
+        ? await helius.accountKind(address)
+        : 'unknown';
+    if (kind === 'wallet') {
+      const offer =
+        `📌 <b>That looks like a wallet, not a coin.</b>\n\n` +
+        `<i>I can watch it and tell you when it buys something new.</i>\n\n` +
+        `<code>/track ${esc(address)}</code>`;
+      await ctx.api
+        .editMessageText(chatId, status.message_id, offer, SEND_OPTS)
+        .catch(() => ctx.reply(offer, SEND_OPTS));
+      return;
+    }
 
     await ctx.api
       .editMessageText(chatId, status.message_id, text, SEND_OPTS)
