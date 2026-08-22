@@ -448,9 +448,24 @@ export async function analyzeToken(
         });
       });
 
-      const links = findSideWallets(peerSets, leaderboard);
+      // Match against BOTH lists the provider gave us, not just the profit
+      // leaderboard. That list is the top 100 earners, so it only recognises an
+      // alt that independently out-earned almost everyone — and a wallet split
+      // across several addresses is, by construction, smaller in each of them.
+      // The first-buyer list is a second hundred wallets, already fetched, and
+      // an alt that bought early is exactly what this is looking for.
+      const byWallet = new Map<string, FirstBuyer>();
+      for (const b of [...leaderboard, ...history.providerFirstBuyers]) {
+        const existing = byWallet.get(b.wallet);
+        // Prefer whichever record reports more, since the two lists overlap and
+        // one may be a partial view of the same position.
+        if (!existing || b.totalPnlUsd > existing.totalPnlUsd) byWallet.set(b.wallet, b);
+      }
+      const candidatePool = [...byWallet.values()];
+
+      const links = findSideWallets(peerSets, candidatePool);
       for (const w of provenWinners) w.sideWallets = links.get(w.wallet) ?? [];
-      sideClusters = buildClusters(links, leaderboard);
+      sideClusters = buildClusters(links, candidatePool);
     }
 
     if (leaderboard.length > 0 && candidates.length === 0) {
