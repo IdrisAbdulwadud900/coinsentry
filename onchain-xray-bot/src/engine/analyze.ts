@@ -903,7 +903,7 @@ async function loadProviderOnlyHistory(meta: TokenMeta, warnings: string[]): Pro
   const providerFirstBuyers = tracker ? await tracker.firstBuyers(meta.address) : [];
 
   warnings.push(
-    'Fast scan: read from trade records and candles rather than replaying transactions. Supply relays and the dev funding graph need the full replay — use Deep scan for those.',
+    'Fast scan: read from trade records and candles rather than replaying transactions. The relay screen can still name early wallets that moved supply out without selling, but not where it went; tracing that, and the dev funding graph, needs Deep scan.',
   );
 
   return {

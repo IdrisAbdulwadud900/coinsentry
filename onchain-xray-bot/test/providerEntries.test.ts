@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { buildProviderEntries } from '../src/engine/providerEntries.js';
 import type { FirstBuyer } from '../src/data/solanatracker.js';
+import type { ProviderEntry } from '../src/types/domain.js';
+import { makeProviderEntry } from './fixtures.js';
 
 const SUPPLY = 1_000_000_000;
 const ctx = { floorMcap: 2_100, floorBandMax: 3_675, firstTradeTs: 1_000, totalSupply: SUPPLY };
@@ -210,5 +212,44 @@ describe('mixed candle timeframes', () => {
     const full = buyer({ firstBuyTs: 0, firstSellTs: 86_400 });
     const [e] = buildProviderEntries([full], ctx, 0.00001, curve);
     expect(e!.peakMcapBeforeFirstSell).toBeCloseTo(9e-3 * SUPPLY, 0);
+  });
+});
+
+describe('supply that left without a sale', () => {
+  const entry = (over: Partial<ProviderEntry>): ProviderEntry =>
+    makeProviderEntry({ movedOutTokens: 0, everHeldTokens: 1_000_000, ...over });
+
+  it('finds a wallet whose tokens left without being sold', async () => {
+    // Acquired minus sold minus still-held is supply that was transferred out.
+    // It is the source half of a relay and needs no replay to see, which is
+    // what makes it usable on a coin far too large to replay.
+    const { movedSupplyOut } = await import('../src/engine/providerEntries.js');
+    const out = movedSupplyOut([
+      entry({ wallet: 'MOVER', movedOutTokens: 540_000 }),
+      entry({ wallet: 'SOLD', movedOutTokens: 0 }),
+    ]);
+    expect(out.map((e) => e.wallet)).toEqual(['MOVER']);
+  });
+
+  it('ignores dust left behind by a full exit', async () => {
+    const { movedSupplyOut } = await import('../src/engine/providerEntries.js');
+    expect(movedSupplyOut([entry({ movedOutTokens: 500 })])).toHaveLength(0);
+  });
+
+  it('measures against everything acquired, not what remains', async () => {
+    // A wallet that sold 90% and moved 2% has not moved most of its position;
+    // using the wrong denominator would report it as if it had.
+    const { movedSupplyOut } = await import('../src/engine/providerEntries.js');
+    const out = movedSupplyOut([entry({ movedOutTokens: 20_000, everHeldTokens: 1_000_000 })]);
+    expect(out).toHaveLength(0);
+  });
+
+  it('ranks the biggest movers first', async () => {
+    const { movedSupplyOut } = await import('../src/engine/providerEntries.js');
+    const out = movedSupplyOut([
+      entry({ wallet: 'SMALL', movedOutTokens: 100_000 }),
+      entry({ wallet: 'BIG', movedOutTokens: 800_000 }),
+    ]);
+    expect(out.map((e) => e.wallet)).toEqual(['BIG', 'SMALL']);
   });
 });
