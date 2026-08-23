@@ -59,7 +59,18 @@ async function main(): Promise<void> {
   let lastStage = '';
 
   try {
+    // Elapsed per PHASE, not per progress tick. A scan that feels slow is slow
+    // in one place, and without this the only way to find it is to guess.
+    let phase = '';
+    let phaseStart = started;
+    const timings: [string, number][] = [];
+
     const report = await analyzeToken(address, (u) => {
+      if (u.stage !== phase) {
+        if (phase) timings.push([phase, Date.now() - phaseStart]);
+        phase = u.stage;
+        phaseStart = Date.now();
+      }
       const line = `${u.stage}${u.detail ? ` — ${u.detail}` : ''}`;
       if (line !== lastStage) {
         lastStage = line;
@@ -67,9 +78,16 @@ async function main(): Promise<void> {
       }
     }, { deep });
 
+    if (phase) timings.push([phase, Date.now() - phaseStart]);
+    const total = Date.now() - started;
     console.error(
-      `\x1b[2m\ncompleted in ${((Date.now() - started) / 1000).toFixed(1)}s · ${rpcRequestCount} EVM RPC requests\x1b[0m`,
+      `\x1b[2m\ncompleted in ${(total / 1000).toFixed(1)}s · ${rpcRequestCount} EVM RPC requests\x1b[0m`,
     );
+    for (const [name, ms] of timings.sort((a, b) => b[1] - a[1]).slice(0, 6)) {
+      if (ms < 200) continue;
+      const share = total > 0 ? Math.round((ms / total) * 100) : 0;
+      console.error(`\x1b[2m  ${String(Math.round(ms / 100) / 10).padStart(6)}s  ${String(share).padStart(3)}%  ${name}\x1b[0m`);
+    }
 
     banner('OVERVIEW');
     console.log(toText(renderOverview(report)));
