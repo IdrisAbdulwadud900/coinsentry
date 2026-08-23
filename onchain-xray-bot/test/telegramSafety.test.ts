@@ -386,3 +386,34 @@ describe('alerts name what actually happened', () => {
     checkHtml('watchlist with filter', html);
   });
 });
+
+describe('the watchlist shows that it is alive', () => {
+  it('says when it last checked and when the wallet last moved', async () => {
+    // Two wallets tracked for a day with no alerts looked broken. Both were
+    // checked every two minutes; neither had transacted since being added.
+    const { renderWatchlist } = await import('../src/bot/render/screens.js');
+    const now = Math.floor(Date.now() / 1000);
+    const html = renderWatchlist([
+      {
+        wallet: '7Mwof5tBvNPC6e1zwtHRQynqXcuDpqqbeY9vSZLW2Bv8',
+        note: 'Added by hand',
+        addedAt: now - 86_400,
+        filter: 'buys',
+        lastCheckedTs: now - 120,
+        lastActivityTs: now - 78_000,
+      },
+    ]);
+    expect(html).toMatch(/checked/i);
+    expect(html).toMatch(/last moved/i);
+    checkHtml('watchlist liveness', html);
+  });
+
+  it('says a new wallet has not been checked yet rather than nothing', async () => {
+    const { renderWatchlist } = await import('../src/bot/render/screens.js');
+    const html = renderWatchlist([
+      { wallet: '7Mwof5tBvNPC6e1zwtHRQynqXcuDpqqbeY9vSZLW2Bv8', note: 'n', addedAt: 1_700_000_000 },
+    ]);
+    expect(html).toMatch(/not checked yet/i);
+    checkHtml('watchlist unchecked', html);
+  });
+});

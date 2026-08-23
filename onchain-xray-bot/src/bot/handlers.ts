@@ -27,12 +27,14 @@ import {
   setWatchFilter,
 } from '../data/watchlist.js';
 import type { WatchFilter } from '../engine/walletWatch.js';
+import type { AnalysisReport } from '../types/domain.js';
 import {
   homeKeyboard,
   listKeyboard,
   walletKeyboard,
   simpleBack,
   walletPickerRow,
+  walletTrackRow,
   parseCb,
   trackPromptKeyboard,
   trackFilterKeyboard,
@@ -52,7 +54,7 @@ import {
 } from './session.js';
 import { progressCard, ICON } from './ui.js';
 import { sortEarlyBuyers, type EntrySort } from '../engine/entries.js';
-import { rankBadge, esc } from '../util/format.js';
+import { rankBadge, esc, shortAddr } from '../util/format.js';
 import { CHAINS } from '../data/chains.js';
 import { HeliusClient } from '../data/helius.js';
 
@@ -488,7 +490,7 @@ async function renderView(
       const sorted = sortEarlyBuyers(report.floorEntries, session.sort);
       const { slice, info } = paginate(sorted, page);
       const kb = listKeyboard(id, 'floor', info, { sort: session.sort, copyKind: 'floor' });
-      addWalletButtons(kb, session, 'floor', info.page, slice.map((e) => e.ledger.wallet));
+      await addWalletButtons(kb, session, 'floor', info.page, slice.map((e) => e.ledger.wallet));
       await edit(renderFloorEntries(report, info.page, session.sort), kb);
       return;
     }
@@ -521,7 +523,7 @@ async function renderView(
       }
       const { slice, info } = paginate(report.diamondHands, page);
       const kb = listKeyboard(id, 'diamond', info, { copyKind: 'diamond' });
-      addWalletButtons(kb, session, 'diamond', info.page, slice.map((d) => d.ledger.wallet));
+      await addWalletButtons(kb, session, 'diamond', info.page, slice.map((d) => d.ledger.wallet));
       await edit(renderDiamondHands(report, info.page), kb);
       return;
     }
@@ -529,7 +531,7 @@ async function renderView(
     case 'dev': {
       const { slice, info } = paginate(report.linkedWallets, page);
       const kb = listKeyboard(id, 'dev', info, { copyKind: 'dev' });
-      addWalletButtons(kb, session, 'dev', info.page, slice.map((l) => l.wallet));
+      await addWalletButtons(kb, session, 'dev', info.page, slice.map((l) => l.wallet));
       await edit(renderDevCluster(report, info.page), kb);
       return;
     }
@@ -537,7 +539,7 @@ async function renderView(
     case 'relay': {
       const { slice, info } = paginate(report.supplyRelays, page, 4);
       const kb = listKeyboard(id, 'relay', info, { copyKind: 'relay' });
-      addWalletButtons(kb, session, 'relay', info.page, slice.map((r) => r.source));
+      await addWalletButtons(kb, session, 'relay', info.page, slice.map((r) => r.source));
       await edit(renderRelays(report, info.page), kb);
       return;
     }
@@ -573,6 +575,50 @@ async function renderView(
           watched,
         }),
       );
+      return;
+    }
+
+    // Toggling from a list. Deliberately re-renders the SAME screen rather than
+    // opening the wallet: the reader is working down a list and being thrown to
+    // another view for each decision is what made this worth adding.
+    case 'qtrack': {
+      const [back = 'floor', idxRaw = ''] = arg.split(':');
+      const wallet = session.wallets[Number(idxRaw)];
+      if (!wallet) {
+        await ctx.answerCallbackQuery({ text: 'That wallet is no longer in this report.' });
+        return;
+      }
+      if (report.token.chain !== 'solana') {
+        await ctx.answerCallbackQuery({
+          text: `Tracking works on Solana only. ${CHAINS[report.token.chain].label} wallets can be analysed but not watched yet.`,
+          show_alert: true,
+        });
+        return;
+      }
+
+      const already = await isWatched(session.chatId, wallet);
+      if (already) {
+        await unwatchWallet(session.chatId, wallet);
+        await ctx.answerCallbackQuery({ text: `Stopped tracking ${shortAddr(wallet, 4, 4)}.` });
+      } else {
+        const res = await watchWallet(
+          session.chatId,
+          wallet,
+          `Found on $${report.token.symbol.trim().toUpperCase()}`,
+        );
+        if (res === 'full') {
+          await ctx.answerCallbackQuery({
+            text: `Watchlist is full (${config.MAX_WATCHED_WALLETS}). Remove one with /untrack first.`,
+            show_alert: true,
+          });
+          return;
+        }
+        await ctx.answerCallbackQuery({
+          text: `Tracking ${shortAddr(wallet, 4, 4)} — you will hear when it buys.`,
+        });
+      }
+
+      await rerenderList(ctx, session, report, back as View, page, edit);
       return;
     }
 
@@ -633,13 +679,57 @@ async function renderView(
 }
 
 /** Adds one drill-down button per visible row, labelled to match its rank. */
-function addWalletButtons(
+/**
+ * Redraws whichever list the reader was on, with the track state refreshed.
+ *
+ * Shares the paging and sorting of the original handlers rather than
+ * duplicating them, so a toggle cannot land the reader on a different page
+ * than the one they tapped from.
+ */
+async function rerenderList(
+  ctx: Context,
+  session: Session,
+  report: AnalysisReport,
+  view: View,
+  page: number,
+  edit: (text: string, kb: InlineKeyboard) => Promise<unknown>,
+): Promise<void> {
+  const id = session.id;
+  if (view === 'diamond') {
+    const { slice, info } = paginate(report.diamondHands, page);
+    const kb = listKeyboard(id, 'diamond', info, {});
+    await addWalletButtons(kb, session, 'diamond', info.page, slice.map((d) => d.ledger.wallet));
+    await edit(renderDiamondHands(report, info.page), kb);
+    return;
+  }
+  if (view === 'dev') {
+    const { slice, info } = paginate(report.linkedWallets, page);
+    const kb = listKeyboard(id, 'dev', info, {});
+    await addWalletButtons(kb, session, 'dev', info.page, slice.map((l) => l.wallet));
+    await edit(renderDevCluster(report, info.page), kb);
+    return;
+  }
+  if (view === 'relay') {
+    const { slice, info } = paginate(report.supplyRelays, page, 4);
+    const kb = listKeyboard(id, 'relay', info, {});
+    await addWalletButtons(kb, session, 'relay', info.page, slice.map((r) => r.source));
+    await edit(renderRelays(report, info.page), kb);
+    return;
+  }
+  const sorted = sortEarlyBuyers(report.floorEntries, session.sort);
+  const { slice, info } = paginate(sorted, page);
+  const kb = listKeyboard(id, 'floor', info, { sort: session.sort, copyKind: 'floor' });
+  await addWalletButtons(kb, session, 'floor', info.page, slice.map((e) => e.ledger.wallet));
+  await edit(renderFloorEntries(report, info.page, session.sort), kb);
+}
+
+async function addWalletButtons(
   kb: InlineKeyboard,
   session: Session,
   view: View,
   page: number,
   wallets: string[],
-): void {
+): Promise<void> {
   const size = view === 'relay' ? 4 : config.LEADERBOARD_PAGE_SIZE;
   const entries = wallets
     .map((w, i) => {
@@ -658,5 +748,18 @@ function addWalletButtons(
   const inline = kb.inline_keyboard;
   const lastRow = inline.pop();
   walletPickerRow(kb, session.id, view, page, entries);
+
+  // Tracking only exists on Solana, so the row is offered only where it can
+  // actually do something — a button that always refuses is worse than none.
+  if (session.report.token.chain === 'solana') {
+    const withState = await Promise.all(
+      entries.map(async (e) => ({
+        ...e,
+        tracked: await isWatched(session.chatId, session.wallets[e.walletIdx] ?? ''),
+      })),
+    );
+    walletTrackRow(kb, session.id, view, page, withState);
+  }
+
   if (lastRow) inline.push(lastRow);
 }

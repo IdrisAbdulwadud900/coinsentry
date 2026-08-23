@@ -5,7 +5,7 @@ import { dexScreenerUrl } from '../util/format.js';
 import type { EntrySort } from '../engine/entries.js';
 import type { PageInfo } from './render/screens.js';
 
-export type View = 'home' | 'floor' | 'first' | 'winners' | 'play' | 'trackask' | 'trackset' | 'diamond' | 'dev' | 'relay' | 'risk' | 'wallet' | 'copy' | 'track';
+export type View = 'home' | 'floor' | 'first' | 'winners' | 'play' | 'trackask' | 'trackset' | 'qtrack' | 'diamond' | 'dev' | 'relay' | 'risk' | 'wallet' | 'copy' | 'track';
 
 /**
  * Callback payloads are limited to 64 bytes, so everything is positional and
@@ -156,6 +156,34 @@ export function walletPickerRow(
   if (indices.length === 0) return kb;
   indices.forEach((entry, i) => {
     kb.text(entry.label, cb(id, 'wallet', page, `${view}:${entry.walletIdx}`));
+    if ((i + 1) % 4 === 0) kb.row();
+  });
+  kb.row();
+  return kb;
+}
+
+/**
+ * A track toggle beside every wallet on a list.
+ *
+ * Tracking used to cost a drill-in: tap a number, read the wallet screen, tap
+ * Track, come back. Deciding whether to follow someone happens while reading
+ * the list, so the decision belongs there.
+ *
+ * The wallet is addressed by index, never by address — 44 characters would blow
+ * Telegram's 64-byte callback budget on their own.
+ */
+export function walletTrackRow(
+  kb: InlineKeyboard,
+  id: string,
+  view: View,
+  page: number,
+  entries: { label: string; walletIdx: number; tracked: boolean }[],
+): InlineKeyboard {
+  if (entries.length === 0) return kb;
+  entries.forEach((e, i) => {
+    // A tick for one already followed, so the row shows state rather than just
+    // offering an action whose effect the reader has to remember.
+    kb.text(`${e.tracked ? '✅' : '📌'}${e.label}`, cb(id, 'qtrack', page, `${view}:${e.walletIdx}`));
     if ((i + 1) % 4 === 0) kb.row();
   });
   kb.row();

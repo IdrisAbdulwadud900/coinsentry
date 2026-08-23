@@ -6,6 +6,7 @@ import { NativePriceOracle } from '../data/nativePrice.js';
 import {
   filterOf,
   isWatchableWallet,
+  markChecked,
   listWatched,
   setCursor,
   type WatchEntry,
@@ -80,7 +81,12 @@ async function checkOne(
     undefined,
     entry.lastSignature ?? undefined,
   );
-  if (sigs.length === 0) return [];
+  // Recorded even when nothing happened. "Checked, nothing to report" is the
+  // answer a user needs to distinguish a quiet wallet from a dead watcher.
+  if (sigs.length === 0) {
+    await markChecked(entry.chatId, entry.wallet, null);
+    return [];
+  }
 
   const newest = sigs[0]!.signature;
 
@@ -91,6 +97,8 @@ async function checkOne(
     await setCursor(entry.chatId, entry.wallet, newest);
     return [];
   }
+
+  await markChecked(entry.chatId, entry.wallet, sigs[0]?.blockTime ?? null);
 
   const { txs } = await helius.hydrate(sigs.map((s) => s.signature));
   const filter = filterOf(entry);

@@ -827,7 +827,14 @@ const WATCH_FILTER_LABEL: Record<string, string> = {
 };
 
 export function renderWatchlist(
-  entries: { wallet: string; note: string; addedAt: number; filter?: string }[],
+  entries: {
+    wallet: string;
+    note: string;
+    addedAt: number;
+    filter?: string;
+    lastCheckedTs?: number;
+    lastActivityTs?: number;
+  }[],
 ): string {
   if (entries.length === 0) {
     return [
@@ -844,7 +851,17 @@ export function renderWatchlist(
         `${rankBadge(i)} <a href="${walletUrl('solana', e.wallet)}">${esc(shortAddr(e.wallet, 4, 4))}</a>\n` +
         // The filter is shown because it decides whether silence means "no
         // activity" or "activity you asked not to hear about".
-        `   <i>${esc(e.note)} ${ICON.bullet} ${esc(WATCH_FILTER_LABEL[e.filter ?? 'buys'] ?? 'buys')} ${ICON.bullet} added ${ago(e.addedAt)}</i>`,
+        `   <i>${esc(e.note)} ${ICON.bullet} ${esc(WATCH_FILTER_LABEL[e.filter ?? 'buys'] ?? 'buys')} ${ICON.bullet} added ${ago(e.addedAt)}</i>\n` +
+        // Silence is ambiguous without this. A watcher that is working and one
+        // that is dead both send nothing; the only difference a reader can see
+        // is whether anyone is still looking.
+        `   <i>${esc(
+          e.lastCheckedTs
+            ? `checked ${ago(e.lastCheckedTs)}`
+            : 'not checked yet — the first poll runs within a couple of minutes',
+        )}${
+          e.lastActivityTs ? esc(` ${ICON.bullet} wallet last moved ${ago(e.lastActivityTs)}`) : ''
+        }</i>`,
     )
     .join('\n\n');
   return clampMessage(
