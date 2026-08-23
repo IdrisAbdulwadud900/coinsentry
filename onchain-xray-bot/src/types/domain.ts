@@ -168,6 +168,15 @@ export interface DiamondHand {
  * conviction measure used elsewhere — cannot be derived and is absent by design
  * rather than estimated.
  */
+export interface RepeatOffender {
+  wallet: string;
+  role: 'floor-taker' | 'relay-source';
+  supplyPct: number;
+  /** Symbols of earlier tokens it was seen on, for naming them. */
+  priorTokens: string[];
+  priorCount: number;
+}
+
 export interface ProviderEntry {
   wallet: string;
   tier: EntryTier;
@@ -333,6 +342,13 @@ export interface AnalysisReport {
    * where every other screen answers "who".
    */
   winningPlays: import('../engine/winningPlay.js').PlayGroup[];
+
+  /**
+   * Wallets in this report that already appeared on a token scanned earlier.
+   * Empty on a fresh install, which means "nothing to compare against" rather
+   * than "these wallets are new" — the UI must not confuse the two.
+   */
+  repeatOffenders: RepeatOffender[];
 
   /** Per-module warnings surfaced in the UI (missing key, partial data...). */
   warnings: string[];

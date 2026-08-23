@@ -169,6 +169,7 @@ export function makeReport(over: Partial<AnalysisReport> = {}): AnalysisReport {
     provenWinners: [],
     sideClusters: [],
     winningPlays: [],
+    repeatOffenders: [],
     winnersChecked: 0,
     warnings: [],
     ...over,

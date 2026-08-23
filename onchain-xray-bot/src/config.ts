@@ -291,6 +291,17 @@ const schema = z.object({
   WATCH_MAX_NEW_SIGNATURES: num(200),
   /** Rolling log of watched-wallet buys, used to spot convergence. */
   BUYLOG_PATH: z.string().default('./data/recent-buys.json'),
+  WALLET_HISTORY_PATH: z.string().default('./data/wallet-history.json'),
+  /**
+   * Sightings kept before the oldest are dropped. Each is a small row, and a
+   * rescan refreshes anything still worth knowing.
+   */
+  WALLET_HISTORY_MAX: num(20_000),
+  /**
+   * Supply share that makes a floor entry worth remembering. Below this a
+   * wallet is one of many at the floor, which says nothing about the wallet.
+   */
+  WALLET_HISTORY_MIN_SUPPLY_PCT: num(2),
   /**
    * How long two buys can be apart and still count as the same move. Good
    * traders buy many things; several of them buying the SAME thing within a

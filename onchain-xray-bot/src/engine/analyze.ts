@@ -4,6 +4,10 @@ import { RateLimiter } from '../util/http.js';
 import type {
   AnalysisReport,
   Chain,
+  EarlyBuyer,
+  ProviderEntry,
+  RepeatOffender,
+  SupplyRelay,
   ProgressFn,
   TokenMeta,
   Trade,
@@ -13,6 +17,12 @@ import type {
 } from '../types/domain.js';
 import { detectAddressKind, normalizeAddress, CHAINS, logChunkFor } from '../data/chains.js';
 import { lookupToken } from '../data/dexscreener.js';
+import {
+  priorSightings,
+  recordSightings,
+  type WalletRole,
+  type WalletSighting,
+} from '../data/walletHistory.js';
 import { v4PoolsOf } from '../data/evmPair.js';
 import { getToken as getJupToken } from '../data/jupiter.js';
 import { HeliusClient } from '../data/helius.js';
@@ -475,10 +485,17 @@ export async function analyzeToken(
     }
   }
 
+  // Remember the wallets worth recognising later, and look up whether any of
+  // them already appeared on a coin scanned before. On EVM this is the only
+  // cross-coin signal available — no provider indexes it — and it is built
+  // entirely from scans already paid for.
+  const repeatOffenders = await rememberAndMatch(meta, floorEntries, providerEntries, supplyRelays);
+
   await onProgress({ stage: 'Done', pct: 1 });
 
   return {
     token: meta,
+    repeatOffenders,
     generatedAt: Math.floor(Date.now() / 1000),
     floorMcap,
     floorSource,
@@ -508,6 +525,86 @@ export async function analyzeToken(
     winnersChecked,
     warnings,
   };
+}
+
+/**
+ * Records this scan's notable wallets and reports which are not new.
+ *
+ * Floor takers and relay sources are the two roles worth recognising: both are
+ * a claim about behaviour rather than identity, and both repeat across tokens
+ * when the same operator is at work.
+ *
+ * Failure here must never take a report down — the history is a convenience
+ * built on top of the analysis, not part of it.
+ */
+async function rememberAndMatch(
+  meta: TokenMeta,
+  floorEntries: EarlyBuyer[],
+  providerEntries: ProviderEntry[],
+  supplyRelays: SupplyRelay[],
+): Promise<RepeatOffender[]> {
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const symbol = meta.symbol.trim().toUpperCase();
+    const base = { chain: meta.chain, token: meta.address, symbol, ts: now };
+
+    const fresh: WalletSighting[] = [];
+    const consider = (wallet: string, role: WalletRole, supplyPct: number) => {
+      if (!wallet) return;
+      fresh.push({ ...base, wallet, role, supplyPct });
+    };
+
+    for (const e of floorEntries) {
+      if (e.supplyPct >= config.WALLET_HISTORY_MIN_SUPPLY_PCT) {
+        consider(e.ledger.wallet, 'floor-taker', e.supplyPct);
+      }
+    }
+    for (const e of providerEntries) {
+      if (e.supplyPct >= config.WALLET_HISTORY_MIN_SUPPLY_PCT) {
+        consider(e.wallet, 'floor-taker', e.supplyPct);
+      }
+    }
+    for (const r of supplyRelays) {
+      if (r.suspicion >= 60) consider(r.source, 'relay-source', r.relaySupplyPct);
+    }
+
+    // Matched BEFORE recording, or this scan's own sightings would count as
+    // prior ones and every wallet would look like a repeat.
+    //
+    // One wallet, one entry. A single address is routinely the source of dozens
+    // of relays on the same coin, and reporting it once per relay turned one
+    // repeat operator into "and 29 more wallets seen before" — a count of rows
+    // dressed up as a count of wallets.
+    const byWallet = new Map<string, RepeatOffender>();
+    for (const s of fresh) {
+      const wallet = s.wallet.toLowerCase();
+      if (byWallet.has(wallet)) {
+        // Keep the largest share, so the strongest role speaks for the wallet.
+        const held = byWallet.get(wallet)!;
+        if (s.supplyPct > held.supplyPct) {
+          held.supplyPct = s.supplyPct;
+          held.role = s.role;
+        }
+        continue;
+      }
+      const prior = await priorSightings(s.wallet, meta.address);
+      if (prior.length === 0) continue;
+      byWallet.set(wallet, {
+        wallet: s.wallet,
+        role: s.role,
+        supplyPct: s.supplyPct,
+        priorTokens: [...new Set(prior.map((p) => p.symbol))].slice(0, 5),
+        priorCount: new Set(prior.map((p) => p.token.toLowerCase())).size,
+      });
+    }
+    const out = [...byWallet.values()];
+
+    await recordSightings(fresh);
+    return out.sort((a, b) => b.priorCount - a.priorCount || b.supplyPct - a.supplyPct);
+  } catch (err) {
+    log.debug({ err, token: meta.address }, 'wallet history unavailable');
+    return [];
+  }
 }
 
 // --- Metadata ----------------------------------------------------------------

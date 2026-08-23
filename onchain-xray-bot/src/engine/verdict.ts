@@ -1,5 +1,6 @@
 import type { AnalysisReport } from '../types/domain.js';
 import { summariseSmartMoney } from './smartMoney.js';
+import { esc, shortAddr } from '../util/format.js';
 
 export interface VerdictFactor {
   label: string;
@@ -125,6 +126,29 @@ export function computeVerdict(report: AnalysisReport): Verdict {
       label: 'Concentrated floor entry',
       weight: 12,
       detail: `A single wallet bought ${biggestFloorShare.toFixed(1)}% of the supply at the floor`,
+    });
+  }
+
+  // --- Repeat operators -----------------------------------------------------
+  //
+  // Built from scans already run rather than any provider, which is what makes
+  // it work on chains nothing indexes. A wallet that took the floor on a coin
+  // last week and is taking it again is a different proposition from one doing
+  // it once.
+  //
+  // Weighted modestly on purpose: the evidence is real but the sample is
+  // whatever happened to be scanned, so it should colour a judgement rather
+  // than drive it.
+  const repeats = report.repeatOffenders.filter((r) => r.priorCount >= 1);
+  if (repeats.length > 0) {
+    const worst = repeats[0]!;
+    factors.push({
+      label: 'Repeat operator',
+      weight: Math.min(14, 6 + repeats.length * 2),
+      detail:
+        `${esc(shortAddr(worst.wallet, 4, 4))} ${worst.role === 'relay-source' ? 'relayed supply' : 'took the floor'} ` +
+        `on ${worst.priorCount} coin${worst.priorCount > 1 ? 's' : ''} scanned earlier` +
+        (repeats.length > 1 ? `, and ${repeats.length - 1} more wallets recur` : ''),
     });
   }
 

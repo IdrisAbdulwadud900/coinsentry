@@ -137,6 +137,20 @@ export function renderOverview(report: AnalysisReport): string {
   );
   lines.push('');
 
+  // --- Repeat operators -----------------------------------------------------
+  // Shown above smart money because it is the rarer and more actionable claim:
+  // this exact address was doing this on a coin you already looked at.
+  if (report.repeatOffenders.length > 0) {
+    const top = report.repeatOffenders[0]!;
+    const others = report.repeatOffenders.length - 1;
+    lines.push(
+      `🔁 <b>${esc(shortAddr(top.wallet, 4, 4))}</b> did this on ${top.priorCount} coin${top.priorCount > 1 ? 's' : ''} you scanned before ` +
+        `${ICON.bullet} <i>${esc(top.priorTokens.map((t) => `$${t}`).join(', '))}</i>` +
+        (others > 0 ? `\n<i>and ${others} more wallet${others > 1 ? 's' : ''} seen before</i>` : ''),
+    );
+    lines.push('');
+  }
+
   // --- Smart money ----------------------------------------------------------
   const smart = summariseSmartMoney(Object.values(report.smartMoney));
   if (smart.rated > 0) {
