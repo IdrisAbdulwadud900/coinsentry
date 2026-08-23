@@ -102,6 +102,32 @@ export function computeVerdict(report: AnalysisReport): Verdict {
     });
   }
 
+  // --- One wallet taking the floor -----------------------------------------
+  //
+  // Nothing else here catches this. "Launch bundle" needs three or more linked
+  // wallets, so a lone sniper slips past it, and "Holder concentration" reads a
+  // provider's current holder list, which exists on Solana and nowhere else.
+  //
+  // Yet it is the strongest insider signal available: on one HyperEVM token a
+  // single address bought 73.63% of the supply nought seconds after launch,
+  // dumped it at 1.22x, and scored zero for it. This is measured from the
+  // replay, so it works on every chain — and buying most of a supply at the
+  // floor is a fact, not an inference about who they are.
+  const biggestFloorShare = largestFloorShare(report);
+  if (biggestFloorShare >= 50) {
+    factors.push({
+      label: 'One wallet took the floor',
+      weight: 20,
+      detail: `A single wallet bought ${biggestFloorShare.toFixed(1)}% of the supply at the floor`,
+    });
+  } else if (biggestFloorShare >= 25) {
+    factors.push({
+      label: 'Concentrated floor entry',
+      weight: 12,
+      detail: `A single wallet bought ${biggestFloorShare.toFixed(1)}% of the supply at the floor`,
+    });
+  }
+
   // --- Token-level safety ---------------------------------------------------
   const safety = report.token.safety;
   if (safety.freezeAuthorityDisabled === false) {
@@ -200,4 +226,26 @@ function clusterHoldingPct(report: AnalysisReport): number {
 function fmtPct(part: number, whole: number): string {
   if (whole <= 0) return '0%';
   return `${Math.min(100, (part / whole) * 100).toFixed(0)}%`;
+}
+
+/**
+ * The largest share of supply any one wallet bought inside the floor band.
+ *
+ * Reads whichever entry list the report actually has — the replay's on chains
+ * we reconstruct ourselves, the provider's on the Solana fast path — so the
+ * signal does not quietly vanish on the path that skips the replay.
+ *
+ * Addresses that could not be holders are already excluded upstream: a peak
+ * position above 100% of supply means tokens passed through rather than
+ * belonged to it.
+ */
+function largestFloorShare(report: AnalysisReport): number {
+  let max = 0;
+  for (const e of report.floorEntries) {
+    if (e.tier === 'floor' || e.tier === 'sub10k') max = Math.max(max, e.supplyPct);
+  }
+  for (const e of report.providerEntries) {
+    if (e.tier === 'floor' || e.tier === 'sub10k') max = Math.max(max, e.supplyPct);
+  }
+  return Number.isFinite(max) ? max : 0;
 }
