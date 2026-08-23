@@ -332,3 +332,35 @@ describe('a keyed RPC widens the log window', () => {
     expect(logChunkFor('base')).toBeGreaterThan(0);
   });
 });
+
+describe('a stated pool version skips the stream that cannot match', () => {
+  it('does not query the V3 event on a pool DexScreener calls v2', async () => {
+    // A pool emits exactly one of these. Querying both spends a third of an
+    // EVM scan's requests on a stream guaranteed to be empty.
+    state.transfers = [{ from: PAIR, to: ALICE, value: 10n ** 18n, tx: '0xa', block: 50n }];
+    state.swapsV2 = [{ quoteIn: 10n ** 16n, quoteOut: 0n, tx: '0xa', block: 50n }];
+    await new EvmClient('base').replay(TOKEN, PAIR, { ...opts(), poolVersion: 'v2' });
+    expect(state.eventShapes).toContain('Swap/6');
+    expect(state.eventShapes).not.toContain('Swap/7');
+  });
+
+  it('queries both when no version is stated', async () => {
+    // Guessing from the dex name would reintroduce the silent-empty failure.
+    state.transfers = [{ from: PAIR, to: ALICE, value: 10n ** 18n, tx: '0xa', block: 50n }];
+    state.swapsV2 = [{ quoteIn: 10n ** 16n, quoteOut: 0n, tx: '0xa', block: 50n }];
+    await new EvmClient('base').replay(TOKEN, PAIR, opts());
+    expect(state.eventShapes).toContain('Swap/6');
+    expect(state.eventShapes).toContain('Swap/7');
+  });
+
+  it('falls back when the stated version yields nothing but transfers exist', async () => {
+    // A wrong label must not become "this coin never traded" — that is exactly
+    // the failure that once read 356,623 transfers and zero swaps.
+    state.transfers = [{ from: PAIR, to: ALICE, value: 10n ** 18n, tx: '0xa', block: 50n }];
+    state.swapsV2 = [{ quoteIn: 10n ** 16n, quoteOut: 0n, tx: '0xa', block: 50n }];
+    // Claim v3, which this mock has no logs for, and expect V2 to be retried.
+    const res = await new EvmClient('base').replay(TOKEN, PAIR, { ...opts(), poolVersion: 'v3' });
+    expect(state.eventShapes).toContain('Swap/6');
+    expect(res.trades.length).toBeGreaterThan(0);
+  });
+});

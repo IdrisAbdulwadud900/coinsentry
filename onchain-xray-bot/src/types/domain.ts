@@ -63,6 +63,8 @@ export interface TokenMeta {
   /** Primary pool/pair address used for trade replay. */
   pairAddress: string | null;
   dexId: string | null;
+  /** Pool version ("v2"/"v3"/"v4") when the source states one. */
+  poolVersion: string | null;
   priceUsd: number;
   mcap: number;
   liquidityUsd: number;

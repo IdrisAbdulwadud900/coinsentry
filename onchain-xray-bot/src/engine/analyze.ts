@@ -531,6 +531,7 @@ async function buildTokenMeta(
     createdAt: best.pairCreatedAt,
     pairAddress: best.pairAddress,
     dexId: best.dexId,
+    poolVersion: best.version,
     priceUsd: best.priceUsd,
     mcap: best.mcap,
     liquidityUsd: best.liquidityUsd,
@@ -820,6 +821,7 @@ async function loadEvmHistory(
       nativePriceAt: (ts) => oracle.at(ts),
       quoteToken,
       dexId: meta.dexId ?? undefined,
+      poolVersion: meta.poolVersion ?? undefined,
       v4Pools,
     },
     (pct, detail) => {
