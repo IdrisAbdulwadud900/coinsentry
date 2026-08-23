@@ -97,9 +97,13 @@ export function renderFloorEntries(report: AnalysisReport, page: number, sort: E
       // the real launch only when the scan reached it; otherwise "#246 in" and
       // "5m after launch" describe the scanned window while reading as facts
       // about the coin's opening.
-      const note = report.reachedLaunch
+      const base = report.reachedLaunch
         ? `#${e.entryRank} in ${ICON.bullet} ${duration(e.secondsAfterLaunch)} after launch`
         : `#${e.entryRank} of those scanned`;
+      // Marked on the row itself, not only in the summary. Someone reading down
+      // the list is deciding about THIS wallet, and having to remember a line
+      // from the overview to know it is a familiar face defeats the point.
+      const note = `${base}${repeatNote(report, e.ledger.wallet)}`;
       return walletRow(report.token.chain, rank, e.ledger, {
         tier: e.tier,
         supplyPct: e.supplyPct,
@@ -354,6 +358,20 @@ export function renderWinningPlay(report: AnalysisReport): string {
       `<blockquote><i>Only wallets up ${usd(config.PLAY_MIN_PROFIT_USD)}+ are counted, so this is what worked, not what was popular. Styles are inferred from entry timing and buy/sell counts.</i></blockquote>`,
     ].join('\n'),
   );
+}
+
+/**
+ * " · 🔁 seen on 2 coins you scanned" for a wallet already on record.
+ *
+ * Empty when it is not, which reads as no claim rather than a clean one — the
+ * bot only knows the coins it has been shown.
+ */
+function repeatNote(report: AnalysisReport, wallet: string): string {
+  const hit = report.repeatOffenders.find(
+    (r) => r.wallet.toLowerCase() === wallet.toLowerCase(),
+  );
+  if (!hit) return '';
+  return ` ${ICON.bullet} 🔁 seen on ${hit.priorCount} coin${hit.priorCount > 1 ? 's' : ''} you scanned`;
 }
 
 // --- Diamond hands -----------------------------------------------------------

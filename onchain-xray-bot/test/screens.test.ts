@@ -150,3 +150,34 @@ describe('a row says which multiple it is showing', () => {
     expect(walletRow('base', '🥇', l, { showMultiple: 'realized' })).toContain('sold at 3.20x');
   });
 });
+
+describe('a familiar wallet is marked where it appears', () => {
+  it('marks a floor row for a wallet seen on an earlier coin', async () => {
+    // Reading down the list is where the decision about a wallet happens.
+    // Putting the fact only in the overview makes the reader carry it.
+    const { renderFloorEntries } = await import('../src/bot/render/screens.js');
+    const ledger = makeLedger();
+    const report = makeReport({
+      floorEntries: [
+        { ledger, tier: 'floor', entryRank: 1, secondsAfterLaunch: 3, supplyPct: 5 },
+      ],
+      repeatOffenders: [
+        {
+          wallet: ledger.wallet,
+          role: 'floor-taker',
+          supplyPct: 5,
+          priorTokens: ['HYPECAT'],
+          priorCount: 2,
+        },
+      ],
+    });
+    expect(renderFloorEntries(report, 0, 'earliest')).toContain('seen on 2 coins you scanned');
+  });
+
+  it('says nothing for a wallet with no history', async () => {
+    // Silence must read as "nothing scanned yet", never as a clean record.
+    const { renderFloorEntries } = await import('../src/bot/render/screens.js');
+    const report = makeReport({ repeatOffenders: [] });
+    expect(renderFloorEntries(report, 0, 'earliest')).not.toContain('you scanned');
+  });
+});
