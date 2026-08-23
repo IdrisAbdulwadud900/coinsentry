@@ -175,6 +175,11 @@ const EXPLORER: Record<Chain, { wallet: (a: string) => string; token: (a: string
     token: (a) => `https://etherscan.io/token/${a}`,
     tx: (h) => `https://etherscan.io/tx/${h}`,
   },
+  hyperevm: {
+    wallet: (a) => `https://hyperevmscan.io/address/${a}`,
+    token: (a) => `https://hyperevmscan.io/token/${a}`,
+    tx: (h) => `https://hyperevmscan.io/tx/${h}`,
+  },
   bsc: {
     wallet: (a) => `https://bscscan.com/address/${a}`,
     token: (a) => `https://bscscan.com/token/${a}`,

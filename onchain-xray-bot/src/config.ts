@@ -23,6 +23,7 @@ const schema = z.object({
   ETHEREUM_RPC_URL: z.string().default(''),
   BSC_RPC_URL: z.string().default(''),
   BASE_RPC_URL: z.string().default(''),
+  HYPEREVM_RPC_URL: z.string().default(''),
   /** Override the per-chain eth_getLogs span. 0 = use the chain's own default. */
   EVM_LOG_CHUNK_BLOCKS: num(0),
   /** Cap on how many chunks we walk before giving up on full history. */

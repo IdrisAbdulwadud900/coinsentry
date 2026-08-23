@@ -3,7 +3,7 @@
  * normalizes into these shapes so the analysis engines are chain-agnostic.
  */
 
-export type Chain = 'solana' | 'ethereum' | 'bsc' | 'base';
+export type Chain = 'solana' | 'ethereum' | 'bsc' | 'base' | 'hyperevm';
 
 
 /** A single directional swap against the token's pool(s). */

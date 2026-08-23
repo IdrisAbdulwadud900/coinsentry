@@ -74,7 +74,7 @@ const WELCOME = [
   `<b>Paste a wallet address</b> and I will offer to watch it — buys, sells, transfers, or all three. Two tracked wallets buying the same coin raises a louder alert.`,
   `<b>${'/'}deep &lt;contract&gt;</b> replays every transaction instead — much slower, but it is what uncovers supply relays and the dev's linked wallets.`,
   '',
-  '<b>Chains:</b> Solana, Ethereum, BNB Chain, Base.',
+  '<b>Chains:</b> Solana, Ethereum, BNB Chain, Base, HyperEVM.',
 ].join('\n');
 
 const HELP = [

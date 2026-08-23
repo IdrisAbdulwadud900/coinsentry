@@ -60,3 +60,37 @@ describe('token contract and routers are not traders', () => {
     expect(isNonTrader('bsc', '0xe2ce6ab80874f21510f8f9b9dad2c1e191c1b4e2')).toBe(false);
   });
 });
+
+describe('HyperEVM is wired into every chain map', () => {
+  it('has a spec with the endpoints and quote assets verified live', async () => {
+    // Every Record<Chain, ...> in the codebase must cover it, or a scan reaches
+    // an undefined and fails somewhere far from the cause.
+    const { CHAINS } = await import('../src/data/chains.js');
+    const spec = CHAINS.hyperevm;
+    expect(spec.dexScreenerId).toBe('hyperevm');
+    expect(spec.nativeSymbol).toBe('HYPE');
+    // WHYPE. The vanity address is genuine, not a placeholder.
+    expect(spec.wrappedNative).toBe('0x5555555555555555555555555555555555555555');
+    expect(spec.stables.length).toBeGreaterThan(0);
+    expect(spec.keylessArchive).toBe(true);
+  });
+
+  it('resolves the chain from DexScreener s slug', async () => {
+    const { chainFromDexScreenerId } = await import('../src/data/chains.js');
+    expect(chainFromDexScreenerId('hyperevm')).toBe('hyperevm');
+  });
+
+  it('links to an explorer that exists', async () => {
+    const { walletUrl, tokenUrl } = await import('../src/util/format.js');
+    expect(walletUrl('hyperevm', '0xabc')).toContain('hyperevmscan.io');
+    expect(tokenUrl('hyperevm', '0xabc')).toContain('hyperevmscan.io');
+  });
+
+  it('prefers the endpoint that serves wide log ranges', async () => {
+    // Hyperliquid's own RPC and hypurrscan cap at 500 blocks; drpc serves
+    // 10,000. Leading with a narrow one would make every scan 20x the requests.
+    const { CHAINS, logChunkFor } = await import('../src/data/chains.js');
+    expect(CHAINS.hyperevm.rpcUrls[0]).toContain('drpc.org');
+    expect(logChunkFor('hyperevm')).toBeGreaterThanOrEqual(10_000);
+  });
+});

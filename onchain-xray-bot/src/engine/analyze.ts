@@ -109,7 +109,7 @@ export async function analyzeToken(
   if (!ds) {
     throw new AnalysisError(
       'No trading pair found for that address.',
-      'The token may be unlaunched, rugged, or on a chain this bot does not cover (Solana, Ethereum, BNB Chain, Base).',
+      'The token may be unlaunched, rugged, or on a chain this bot does not cover (Solana, Ethereum, BNB Chain, Base, HyperEVM).',
     );
   }
 
@@ -792,7 +792,8 @@ async function loadEvmHistory(
   if (meta.createdAt) {
     const spec = CHAINS[meta.chain];
     const ageSeconds = Math.max(0, Math.floor(Date.now() / 1000) - meta.createdAt);
-    const secondsPerBlock = { ethereum: 12, bsc: 0.75, base: 2, solana: 0.4 }[meta.chain];
+    // HyperEVM measured at 0.984s across 10,000 blocks on 2026-08-21.
+    const secondsPerBlock = { ethereum: 12, bsc: 0.75, base: 2, hyperevm: 1, solana: 0.4 }[meta.chain];
     const blocksNeeded = ageSeconds / secondsPerBlock;
     const chunksNeeded = blocksNeeded / logChunkFor(meta.chain);
     const chunkBudget = Math.floor(config.EVM_MAX_LOG_CHUNKS / 2);
