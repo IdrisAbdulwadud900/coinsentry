@@ -270,12 +270,17 @@ describe('tracking a wallet directly', () => {
     expect(text(calls[0]!)).toContain('/track');
   });
 
-  it('/track refuses an EVM address and says why', async () => {
-    // The watcher reads Helius, which cannot see EVM addresses at all — so
-    // accepting one would put a wallet on the list that can never alert.
+  it('/track asks which chain for an EVM address', async () => {
+    // One address exists on every EVM chain, so tracking it means nothing until
+    // the chain is known — and guessing would watch the wrong chain in silence.
     const { bot, calls } = makeBot();
     await bot.handleUpdate(msg('/track 0x8367d463abda0b0270e81e6e5f5d701f8d3cf82d'));
-    expect(text(calls[0]!)).toMatch(/only solana/i);
+    const kb = calls[0]!.payload.reply_markup as
+      | { inline_keyboard: { text: string }[][] }
+      | undefined;
+    const labels = (kb?.inline_keyboard ?? []).flat().map((b) => b.text);
+    expect(labels.some((l) => /base/i.test(l))).toBe(true);
+    expect(labels.some((l) => /hyperevm/i.test(l))).toBe(true);
   });
 
   it('/track accepts a Solana wallet and explains the baseline', async () => {

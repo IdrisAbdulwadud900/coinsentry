@@ -206,13 +206,13 @@ describe('mergeBuysByMint', () => {
 });
 
 describe('only watchable wallets reach the list', () => {
-  it('accepts a Solana address and refuses an EVM one', async () => {
-    // The poller reads Helius, which answers an EVM address with "Invalid
-    // Base58 string" — so storing one buys a "Tracked" badge that can never
-    // fire, and the failure is invisible in a caught warning.
+  it('accepts both address shapes now that EVM wallets are polled too', async () => {
+    // EVM wallets are read from Transfer logs rather than Helius, which indexes
+    // both parties of every transfer — so the chain can be asked what moved for
+    // one address without naming a single token.
     const { isWatchableWallet } = await import('../src/data/watchlist.js');
     expect(isWatchableWallet('7Mwof5tBvNPC6e1zwtHRQynqXcuDpqqbeY9vSZLW2Bv8')).toBe(true);
-    expect(isWatchableWallet('0x8367d463abda0b0270e81e6e5f5d701f8d3cf82d')).toBe(false);
+    expect(isWatchableWallet('0x8367d463abda0b0270e81e6e5f5d701f8d3cf82d')).toBe(true);
   });
 
   it('rejects shapes that are neither', async () => {

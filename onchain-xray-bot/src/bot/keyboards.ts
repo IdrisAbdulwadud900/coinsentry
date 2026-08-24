@@ -5,7 +5,7 @@ import { dexScreenerUrl } from '../util/format.js';
 import type { EntrySort } from '../engine/entries.js';
 import type { PageInfo } from './render/screens.js';
 
-export type View = 'home' | 'floor' | 'first' | 'winners' | 'play' | 'trackask' | 'trackset' | 'qtrack' | 'diamond' | 'dev' | 'relay' | 'risk' | 'wallet' | 'copy' | 'track';
+export type View = 'home' | 'floor' | 'first' | 'winners' | 'play' | 'trackask' | 'trackset' | 'qtrack' | 'trackchain' | 'diamond' | 'dev' | 'relay' | 'risk' | 'wallet' | 'copy' | 'track';
 
 /**
  * Callback payloads are limited to 64 bytes, so everything is positional and
@@ -160,6 +160,22 @@ export function walletPickerRow(
   });
   kb.row();
   return kb;
+}
+
+/**
+ * Which chain an EVM address should be watched on.
+ *
+ * The same address exists on every EVM chain, so tracking one means nothing
+ * until the chain is known. Guessing would watch the wrong chain and report
+ * nothing, which is indistinguishable from a quiet wallet.
+ */
+export function trackChainKeyboard(promptId: string): InlineKeyboard {
+  return new InlineKeyboard()
+    .text('🔵 Base', cb(promptId, 'trackchain', 0, 'base'))
+    .text('⬡ BNB Chain', cb(promptId, 'trackchain', 0, 'bsc'))
+    .row()
+    .text('⟠ Ethereum', cb(promptId, 'trackchain', 0, 'ethereum'))
+    .text('⬢ HyperEVM', cb(promptId, 'trackchain', 0, 'hyperevm'));
 }
 
 /**

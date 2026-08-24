@@ -27,7 +27,7 @@ import {
   setWatchFilter,
 } from '../data/watchlist.js';
 import type { WatchFilter } from '../engine/walletWatch.js';
-import type { AnalysisReport } from '../types/domain.js';
+import type { AnalysisReport, Chain } from '../types/domain.js';
 import {
   homeKeyboard,
   listKeyboard,
@@ -38,6 +38,7 @@ import {
   parseCb,
   trackPromptKeyboard,
   trackFilterKeyboard,
+  trackChainKeyboard,
   type View,
   type ParsedCb,
 } from './keyboards.js';
@@ -71,7 +72,7 @@ const WELCOME = [
   `🏆 <b>Proven winners</b> — wallets that made ${'$'}300+ at 3x+ on this coin AND have won at least 3 other coins the same way`,
   `${ICON.floor} <b>First buyers</b> — who was in at the bottom, and what they walked away with`,
   `${ICON.diamond} <b>Diamond hands</b> — who rode it 3x, 10x, 100x before selling anything`,
-  '📌 <b>Track</b> a Solana wallet and get told when it buys something new',
+  '📌 <b>Track</b> any wallet on any chain and get told when it trades',
   '',
   `<b>Paste a wallet address</b> and I will offer to watch it — buys, sells, transfers, or all three. Two tracked wallets buying the same coin raises a louder alert.`,
   `<b>${'/'}deep &lt;contract&gt;</b> replays every transaction instead — much slower, but it is what uncovers supply relays and the dev's linked wallets.`,
@@ -95,7 +96,7 @@ const HELP = [
   '<b>Commands</b>',
   '<code>/start</code> — the welcome card',
   '<code>/help</code> — this page',
-  '<code>/track &lt;wallet&gt;</code> — watch a Solana wallet (buys; paste the address instead to choose)',
+  '<code>/track &lt;wallet&gt;</code> — watch a wallet (paste the address instead to choose what to hear about)',
   '<code>/untrack &lt;wallet&gt;</code> — stop watching it',
   '<code>/watchlist</code> — everything you are watching',
   '<code>/deep &lt;contract&gt;</code> — replay every transaction',
@@ -136,6 +137,20 @@ export function registerHandlers(bot: Bot): void {
       await ctx.reply(
         'Send <code>/track &lt;wallet&gt;</code> to be told when it buys something new.',
         SEND_OPTS,
+      );
+      return;
+    }
+    if (/^0x/i.test(target)) {
+      const promptId = createTrackPrompt(target, ctx.chat.id);
+      await ctx.reply(
+        [
+          '📌 <b>Which chain is that wallet on?</b>',
+          '',
+          `<code>${esc(target)}</code>`,
+          '',
+          '<i>The same address exists on every EVM chain, so I have to be told which one to watch.</i>',
+        ].join('\n'),
+        { ...SEND_OPTS, reply_markup: trackChainKeyboard(promptId) },
       );
       return;
     }
@@ -195,7 +210,11 @@ export function registerHandlers(bot: Bot): void {
     // The track flow is not report navigation — its id points at a pasted
     // wallet, not a session, so it is handled before the session lookup that
     // would otherwise reject it as an expired report.
-    if (parsed.view === 'trackask' || parsed.view === 'trackset') {
+    if (
+      parsed.view === 'trackask' ||
+      parsed.view === 'trackset' ||
+      parsed.view === 'trackchain'
+    ) {
       await handleTrackFlow(ctx, parsed, chatId);
       return;
     }
@@ -254,10 +273,7 @@ export function registerHandlers(bot: Bot): void {
  */
 async function trackWallet(chatId: number, wallet: string, note: string): Promise<string> {
   if (!isWatchableWallet(wallet)) {
-    return (
-      `${ICON.warn} <b>Only Solana wallets can be tracked.</b>\n\n` +
-      `<i>The watcher reads Helius, which cannot see EVM addresses. Following a Base or BNB Chain wallet needs a per-chain log scan this bot does not run yet.</i>`
-    );
+    return `${ICON.warn} <b>That does not look like a wallet address.</b>`;
   }
 
   const res = await watchWallet(chatId, wallet, note);
@@ -288,6 +304,32 @@ async function handleTrackFlow(ctx: Context, parsed: ParsedCb, chatId: number): 
       text: 'That prompt expired. Paste the wallet again.',
       show_alert: true,
     });
+    return;
+  }
+
+  if (parsed.view === 'trackchain') {
+    const chain = parsed.arg as Chain;
+    const res = await watchWallet(chatId, wallet, 'Added by hand', 'buys', chain);
+    await ctx.answerCallbackQuery({
+      text: res === 'full' ? 'Watchlist is full.' : `Tracking on ${CHAINS[chain].label}.`,
+      show_alert: res === 'full',
+    });
+    if (res !== 'full') {
+      await ctx.api
+        .editMessageText(
+          chatId,
+          ctx.callbackQuery!.message!.message_id,
+          [
+            `📌 <b>Now tracking on ${esc(CHAINS[chain].label)}</b>`,
+            '',
+            `<code>${esc(wallet)}</code>`,
+            '',
+            `<i>The first check only records where the chain is, so nothing fires for trades already made.</i>`,
+          ].join('\n'),
+          SEND_OPTS,
+        )
+        .catch(() => undefined);
+    }
     return;
   }
 
@@ -343,7 +385,7 @@ async function handleTrackFlow(ctx: Context, parsed: ParsedCb, chatId: number): 
     text:
       res === 'full'
         ? `Watchlist is full (${config.MAX_WATCHED_WALLETS}). Remove one with /untrack first.`
-        : 'Only Solana wallets can be tracked.',
+        : 'That does not look like a wallet address.',
     show_alert: true,
   });
 }
@@ -588,23 +630,19 @@ async function renderView(
         await ctx.answerCallbackQuery({ text: 'That wallet is no longer in this report.' });
         return;
       }
-      if (report.token.chain !== 'solana') {
-        await ctx.answerCallbackQuery({
-          text: `Tracking works on Solana only. ${CHAINS[report.token.chain].label} wallets can be analysed but not watched yet.`,
-          show_alert: true,
-        });
-        return;
-      }
-
       const already = await isWatched(session.chatId, wallet);
       if (already) {
         await unwatchWallet(session.chatId, wallet);
         await ctx.answerCallbackQuery({ text: `Stopped tracking ${shortAddr(wallet, 4, 4)}.` });
       } else {
+        // The chain comes from the report, which is why tracking from a list
+        // needs no chain question the way a bare address does.
         const res = await watchWallet(
           session.chatId,
           wallet,
           `Found on $${report.token.symbol.trim().toUpperCase()}`,
+          'buys',
+          report.token.chain,
         );
         if (res === 'full') {
           await ctx.answerCallbackQuery({
@@ -632,27 +670,15 @@ async function renderView(
         return;
       }
 
-      // Tracking polls Helius, which speaks Solana only — it rejects an EVM
-      // address outright as "Invalid Base58 string". Accepting one anyway put a
-      // "📌 Tracked" badge on a wallet that could never produce an alert, and
-      // the failure was invisible: the poller logged a warning and moved on.
-      if (report.token.chain !== 'solana') {
-        await ctx.answerCallbackQuery({
-          text: `Wallet tracking works on Solana only. ${CHAINS[report.token.chain].label} wallets can be analysed but not watched — following them needs a per-chain log scan this bot does not run yet.`,
-          show_alert: true,
-        });
-        return;
-      }
-
       const already = await isWatched(session.chatId, wallet);
       if (already) {
         await unwatchWallet(session.chatId, wallet);
       } else {
         const note = `Found on $${report.token.symbol.trim().toUpperCase()}`;
-        const res = await watchWallet(session.chatId, wallet, note);
+        const res = await watchWallet(session.chatId, wallet, note, 'buys', report.token.chain);
         if (res === 'unsupported') {
           await ctx.answerCallbackQuery({
-            text: 'Only Solana wallets can be tracked right now.',
+            text: 'That does not look like a wallet address.',
             show_alert: true,
           });
           return;
@@ -749,9 +775,7 @@ async function addWalletButtons(
   const lastRow = inline.pop();
   walletPickerRow(kb, session.id, view, page, entries);
 
-  // Tracking only exists on Solana, so the row is offered only where it can
-  // actually do something — a button that always refuses is worse than none.
-  if (session.report.token.chain === 'solana') {
+  {
     const withState = await Promise.all(
       entries.map(async (e) => ({
         ...e,

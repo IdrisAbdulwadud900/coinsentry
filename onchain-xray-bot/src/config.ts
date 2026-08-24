@@ -289,6 +289,13 @@ const schema = z.object({
   WATCH_MIN_SOL: num(0.05),
   /** Cap on new signatures read per wallet per check, for a very busy wallet. */
   WATCH_MAX_NEW_SIGNATURES: num(200),
+  /**
+   * Blocks an EVM wallet check will look back over. Bounds a wallet left
+   * unchecked, so it cannot ask for a month of chain and fail on every poll.
+   */
+  WATCH_EVM_MAX_BLOCKS: num(50_000),
+  /** EVM trades below this are dust and not a decision worth a message. */
+  WATCH_EVM_MIN_USD: num(25),
   /** Rolling log of watched-wallet buys, used to spot convergence. */
   BUYLOG_PATH: z.string().default('./data/recent-buys.json'),
   WALLET_HISTORY_PATH: z.string().default('./data/wallet-history.json'),

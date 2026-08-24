@@ -1,12 +1,18 @@
 import { config } from '../config.js';
+import type { Chain } from '../types/domain.js';
 import { log } from '../util/log.js';
 import { HeliusClient } from '../data/helius.js';
+import { EvmClient } from '../data/evmPair.js';
+import { lookupToken } from '../data/dexscreener.js';
+import { classifyEvmActivity, type TransferLog } from './evmWalletWatch.js';
 import { getToken as getJupToken } from '../data/jupiter.js';
 import { NativePriceOracle } from '../data/nativePrice.js';
 import {
+  chainOf,
   filterOf,
   isWatchableWallet,
   markChecked,
+  setBlockCursor,
   listWatched,
   setCursor,
   type WatchEntry,
@@ -28,6 +34,8 @@ import { detectActivityAcross, matchesFilter, mergeBuysByMint, type WalletBuy } 
  */
 
 export interface BuyAlert extends WalletBuy {
+  /** Which chain the wallet is on, so links point at the right explorer. */
+  chain?: Chain;
   chatId: number;
   note: string;
   symbol: string;
@@ -57,6 +65,16 @@ export async function pollWatchlist(): Promise<BuyAlert[]> {
 
   const alerts: BuyAlert[] = [];
   for (const entry of entries) {
+    // EVM wallets are read from Transfer logs rather than Helius, so they take
+    // a different path entirely — but produce the same alerts.
+    if (chainOf(entry) !== 'solana') {
+      try {
+        alerts.push(...(await checkEvmWallet(entry)));
+      } catch (err) {
+        log.warn({ err, wallet: entry.wallet }, 'evm watchlist check failed');
+      }
+      continue;
+    }
     // Entries stored before tracking was restricted to Solana would fail on
     // every poll forever, logging a warning nobody reads.
     if (!isWatchableWallet(entry.wallet)) continue;
@@ -68,6 +86,91 @@ export async function pollWatchlist(): Promise<BuyAlert[]> {
     }
   }
   return alerts;
+}
+
+/**
+ * One EVM wallet, from the block it was last seen at to the chain head.
+ *
+ * The first sight of a wallet only records where the chain is, exactly as the
+ * Solana path does: alerting on a backlog the moment someone starts following
+ * is how a useful feed becomes a muted one.
+ */
+async function checkEvmWallet(entry: WatchEntry): Promise<BuyAlert[]> {
+  const chain = chainOf(entry);
+  const evm = new EvmClient(chain);
+  const head = await evm.headBlock();
+
+  if (!entry.lastBlock) {
+    await setBlockCursor(entry.chatId, entry.wallet, Number(head));
+    await markChecked(entry.chatId, entry.wallet, null);
+    return [];
+  }
+
+  // Bounded, so a wallet left unchecked for a day cannot ask for a month of
+  // chain in one request and fail on every poll thereafter.
+  const from = BigInt(Math.max(entry.lastBlock + 1, Number(head) - config.WATCH_EVM_MAX_BLOCKS));
+  if (from > head) {
+    await markChecked(entry.chatId, entry.wallet, null);
+    return [];
+  }
+
+  const { logs, failed } = await evm.walletTransfers(entry.wallet, from, head);
+  if (failed) return [];
+
+  await setBlockCursor(entry.chatId, entry.wallet, Number(head));
+  await markChecked(entry.chatId, entry.wallet, logs.length > 0 ? Math.floor(Date.now() / 1000) : null);
+
+  const filter = filterOf(entry);
+  const acts = classifyEvmActivity(logs as TransferLog[], entry.wallet, chain).filter((a) =>
+    matchesFilter(a.kind, filter),
+  );
+
+  const out: BuyAlert[] = [];
+  for (const a of acts) {
+    const dedupe = `${entry.chatId}:${a.tx}:${a.token}`;
+    if (alerted.has(dedupe)) continue;
+    alerted.add(dedupe);
+
+    // Token metadata comes from DexScreener, which also decides whether this is
+    // a tradeable coin at all — a transfer of some random airdrop is noise.
+    const info = await lookupToken(a.token).catch(() => null);
+    if (!info) continue;
+
+    const decimals = 18;
+    const tokenAmount = Number(a.tokenAmountRaw) / 10 ** decimals;
+    const usdValue = tokenAmount * info.best.priceUsd;
+    if (
+      (a.kind === 'buy' || a.kind === 'sell') &&
+      usdValue > 0 &&
+      usdValue < config.WATCH_EVM_MIN_USD
+    ) {
+      continue;
+    }
+
+    out.push({
+      wallet: entry.wallet,
+      mint: a.token,
+      tokenAmount,
+      solSpent: 0,
+      ts: Math.floor(Date.now() / 1000),
+      signature: a.tx,
+      kind: a.kind,
+      chatId: entry.chatId,
+      note: entry.note,
+      symbol: info.best.symbol,
+      name: info.best.name,
+      mcapUsd: info.best.mcap,
+      usdSpent: usdValue,
+      // Solana-only safety flags; absent must not read as safe.
+      freezeAuthorityActive: false,
+      mintAuthorityActive: false,
+      // Convergence is recorded from Solana buys only, so an EVM alert makes
+      // no claim about it rather than a false one.
+      convergence: null,
+      chain,
+    });
+  }
+  return out;
 }
 
 async function checkOne(
