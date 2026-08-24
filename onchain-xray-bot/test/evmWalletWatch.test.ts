@@ -97,3 +97,27 @@ describe('reading an EVM wallet from Transfer logs alone', () => {
     expect(acts[0]!.token).toBe(TOKEN);
   });
 });
+
+describe('what an EVM alert can be sized from', () => {
+  it('carries the quote leg so a trade can be valued without a listing', () => {
+    // Sizing from the token's listed price throws away the most valuable alert
+    // there is: a tracked wallet buying something before anyone indexed it. The
+    // quote leg is its own proof that a market exists.
+    const acts = classifyEvmActivity(
+      [log(TOKEN, OTHER, W, 1_000n), log(WETH, W, OTHER, 470_000_000_000_000n)],
+      W,
+      'base',
+    );
+    expect(acts[0]!.kind).toBe('buy');
+    expect(acts[0]!.quoteToken).toBe(WETH);
+    expect(acts[0]!.quoteRaw).toBe(470_000_000_000_000n);
+  });
+
+  it('leaves a transfer with no quote leg to be judged another way', () => {
+    // Nothing was paid, so there is no value to read off — which is why
+    // transfers are gated on the token having a market at all.
+    const acts = classifyEvmActivity([log(TOKEN, OTHER, W, 1_000n)], W, 'base');
+    expect(acts[0]!.quoteToken).toBeNull();
+    expect(acts[0]!.quoteRaw).toBe(0n);
+  });
+});

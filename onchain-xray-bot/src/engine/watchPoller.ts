@@ -3,7 +3,8 @@ import type { Chain } from '../types/domain.js';
 import { log } from '../util/log.js';
 import { HeliusClient } from '../data/helius.js';
 import { EvmClient } from '../data/evmPair.js';
-import { lookupToken } from '../data/dexscreener.js';
+import { lookupToken, nativePriceUsd } from '../data/dexscreener.js';
+import { CHAINS, normalizeAddress } from '../data/chains.js';
 import { classifyEvmActivity, type TransferLog } from './evmWalletWatch.js';
 import { getToken as getJupToken } from '../data/jupiter.js';
 import { NativePriceOracle } from '../data/nativePrice.js';
@@ -95,6 +96,44 @@ export async function pollWatchlist(): Promise<BuyAlert[]> {
  * Solana path does: alerting on a backlog the moment someone starts following
  * is how a useful feed becomes a muted one.
  */
+/**
+ * ERC-20 decimals, cached for the process.
+ *
+ * A watcher sees the same tokens repeatedly, and the answer never changes.
+ */
+const decimalsCache = new Map<string, number>();
+
+/**
+ * USD value of a trade's quote leg.
+ *
+ * Stablecoins are a dollar; wrapped native is worth whatever the native asset
+ * is. Both are known without any listing for the token being traded, which is
+ * what lets an unlisted coin still produce a sized alert.
+ */
+async function quoteUsd(chain: Chain, quoteToken: string | null, raw: bigint): Promise<number> {
+  if (!quoteToken || raw <= 0n) return 0;
+  const spec = CHAINS[chain];
+  const isStable = spec.stables.some((sx) => normalizeAddress(sx) === normalizeAddress(quoteToken));
+  const decimals = await tokenDecimals(chain, quoteToken);
+  const amount = Number(raw) / 10 ** decimals;
+  if (isStable) return amount;
+  if (normalizeAddress(quoteToken) === normalizeAddress(spec.wrappedNative)) {
+    const px = await nativePriceUsd(chain).catch(() => 0);
+    return amount * px;
+  }
+  return 0;
+}
+
+async function tokenDecimals(chain: Chain, token: string): Promise<number> {
+  const key = `${chain}:${token.toLowerCase()}`;
+  const hit = decimalsCache.get(key);
+  if (hit !== undefined) return hit;
+  const basics = await new EvmClient(chain).tokenBasics(token).catch(() => null);
+  const d = basics?.decimals ?? 18;
+  decimalsCache.set(key, d);
+  return d;
+}
+
 async function checkEvmWallet(entry: WatchEntry): Promise<BuyAlert[]> {
   const chain = chainOf(entry);
   const evm = new EvmClient(chain);
@@ -131,21 +170,36 @@ async function checkEvmWallet(entry: WatchEntry): Promise<BuyAlert[]> {
     if (alerted.has(dedupe)) continue;
     alerted.add(dedupe);
 
-    // Token metadata comes from DexScreener, which also decides whether this is
-    // a tradeable coin at all — a transfer of some random airdrop is noise.
     const info = await lookupToken(a.token).catch(() => null);
-    if (!info) continue;
+    const traded = a.kind === 'buy' || a.kind === 'sell';
 
-    const decimals = 18;
-    const tokenAmount = Number(a.tokenAmountRaw) / 10 ** decimals;
-    const usdValue = tokenAmount * info.best.priceUsd;
-    if (
-      (a.kind === 'buy' || a.kind === 'sell') &&
-      usdValue > 0 &&
-      usdValue < config.WATCH_EVM_MIN_USD
-    ) {
-      continue;
+    // A trade is sized from its QUOTE leg, not the token's listed price.
+    //
+    // That matters more than it sounds. Requiring a DexScreener listing to
+    // value a trade throws away the most valuable alert this bot can send —
+    // a tracked wallet buying something before anyone has indexed it. A quote
+    // leg is its own proof that a market exists and that real money moved,
+    // and WETH and stablecoins can always be valued.
+    const usdValue = traded
+      ? await quoteUsd(chain, a.quoteToken, a.quoteRaw)
+      : info
+        ? (Number(a.tokenAmountRaw) / 10 ** (await tokenDecimals(chain, a.token))) *
+          info.best.priceUsd
+        : 0;
+
+    if (traded) {
+      if (usdValue < config.WATCH_EVM_MIN_USD) continue;
+    } else {
+      // Transfers have no quote leg, and unsolicited airdrops are the dominant
+      // noise on EVM — an active address receives worthless tokens constantly,
+      // and every one is a transfer-in. Liquidity is the gate here, being the
+      // one number a spammer cannot fake cheaply.
+      if (!info || info.best.liquidityUsd < config.WATCH_EVM_MIN_LIQUIDITY_USD) continue;
+      if (usdValue > 0 && usdValue < config.WATCH_EVM_MIN_USD) continue;
     }
+
+    const decimals = await tokenDecimals(chain, a.token);
+    const tokenAmount = Number(a.tokenAmountRaw) / 10 ** decimals;
 
     out.push({
       wallet: entry.wallet,
@@ -157,9 +211,10 @@ async function checkEvmWallet(entry: WatchEntry): Promise<BuyAlert[]> {
       kind: a.kind,
       chatId: entry.chatId,
       note: entry.note,
-      symbol: info.best.symbol,
-      name: info.best.name,
-      mcapUsd: info.best.mcap,
+      // An unlisted token has no name yet; its address is the honest label.
+      symbol: info?.best.symbol ?? `${a.token.slice(0, 6)}…`,
+      name: info?.best.name ?? 'Unlisted token',
+      mcapUsd: info?.best.mcap ?? 0,
       usdSpent: usdValue,
       // Solana-only safety flags; absent must not read as safe.
       freezeAuthorityActive: false,

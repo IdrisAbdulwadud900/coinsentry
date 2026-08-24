@@ -14,6 +14,7 @@ import {
   dexScreenerUrl,
   tokenUrl,
   padEnd,
+  ticker,
 } from '../../util/format.js';
 import { CHAIN_BADGE, ICON, meter, quote, expandable } from '../ui.js';
 

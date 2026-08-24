@@ -1,5 +1,16 @@
 import type { Chain } from '../types/domain.js';
 
+/**
+ * A ticker, normalised for display next to a "$".
+ *
+ * Plenty of tokens ship a symbol that already includes one — DexScreener
+ * returns "$SXR" verbatim — and prefixing that produced "$$SXR". Stripping it
+ * here means every caller can write `$${ticker(sym)}` without checking.
+ */
+export function ticker(symbol: string): string {
+  return symbol.trim().replace(/^\$+/, '').toUpperCase();
+}
+
 /** Telegram HTML parse_mode requires exactly these three escapes. */
 export function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

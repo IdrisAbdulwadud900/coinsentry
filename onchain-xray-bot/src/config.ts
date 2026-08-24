@@ -296,6 +296,11 @@ const schema = z.object({
   WATCH_EVM_MAX_BLOCKS: num(50_000),
   /** EVM trades below this are dust and not a decision worth a message. */
   WATCH_EVM_MIN_USD: num(25),
+  /**
+   * Liquidity a token needs before its movements are worth reporting. Spam
+   * airdrops are the dominant noise on EVM and they have no market behind them.
+   */
+  WATCH_EVM_MIN_LIQUIDITY_USD: num(5_000),
   /** Rolling log of watched-wallet buys, used to spot convergence. */
   BUYLOG_PATH: z.string().default('./data/recent-buys.json'),
   WALLET_HISTORY_PATH: z.string().default('./data/wallet-history.json'),

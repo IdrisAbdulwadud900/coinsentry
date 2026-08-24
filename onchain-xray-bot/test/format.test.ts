@@ -155,3 +155,18 @@ describe('numbers that should never reach a screen', () => {
     }
   });
 });
+
+describe('a ticker is normalised before a $ is put in front of it', () => {
+  it('strips a dollar the token already carries', async () => {
+    // DexScreener returns symbols verbatim, and plenty ship their own "$" —
+    // which rendered as "$$SXR" everywhere a heading prefixed one.
+    const { ticker } = await import('../src/util/format.js');
+    expect(ticker('$SXR')).toBe('SXR');
+    expect(ticker('$$weird')).toBe('WEIRD');
+  });
+
+  it('leaves an ordinary ticker alone', async () => {
+    const { ticker } = await import('../src/util/format.js');
+    expect(ticker(' hypurr ')).toBe('HYPURR');
+  });
+});

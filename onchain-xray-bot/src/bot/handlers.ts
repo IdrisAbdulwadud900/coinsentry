@@ -55,7 +55,7 @@ import {
 } from './session.js';
 import { progressCard, ICON } from './ui.js';
 import { sortEarlyBuyers, type EntrySort } from '../engine/entries.js';
-import { rankBadge, esc, shortAddr } from '../util/format.js';
+import { rankBadge, esc, shortAddr , ticker} from '../util/format.js';
 import { CHAINS } from '../data/chains.js';
 import { HeliusClient } from '../data/helius.js';
 
@@ -640,7 +640,7 @@ async function renderView(
         const res = await watchWallet(
           session.chatId,
           wallet,
-          `Found on $${report.token.symbol.trim().toUpperCase()}`,
+          `Found on $${ticker(report.token.symbol)}`,
           'buys',
           report.token.chain,
         );
@@ -674,7 +674,7 @@ async function renderView(
       if (already) {
         await unwatchWallet(session.chatId, wallet);
       } else {
-        const note = `Found on $${report.token.symbol.trim().toUpperCase()}`;
+        const note = `Found on $${ticker(report.token.symbol)}`;
         const res = await watchWallet(session.chatId, wallet, note, 'buys', report.token.chain);
         if (res === 'unsupported') {
           await ctx.answerCallbackQuery({

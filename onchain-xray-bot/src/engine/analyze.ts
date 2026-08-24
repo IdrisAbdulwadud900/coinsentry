@@ -545,7 +545,7 @@ async function rememberAndMatch(
 ): Promise<RepeatOffender[]> {
   try {
     const now = Math.floor(Date.now() / 1000);
-    const symbol = meta.symbol.trim().toUpperCase();
+    const symbol = meta.symbol.trim().replace(/^\$+/, '').toUpperCase();
     const base = { chain: meta.chain, token: meta.address, symbol, ts: now };
 
     const fresh: WalletSighting[] = [];

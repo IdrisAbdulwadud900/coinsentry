@@ -18,6 +18,7 @@ import {
   walletUrl,
   txUrl,
   dexScreenerUrl,
+  ticker,
 } from '../../util/format.js';
 import {
   ICON,
@@ -75,7 +76,7 @@ export function renderFloorEntries(report: AnalysisReport, page: number, sort: E
   const sortLabel = { earliest: 'lowest entry first', biggest: 'biggest bag first', profit: 'most profit first' }[sort];
 
   const head = [
-    heading(ICON.floor, 'FLOOR ENTRIES', `$${report.token.symbol.trim().toUpperCase()}`),
+    heading(ICON.floor, 'FLOOR ENTRIES', `$${ticker(report.token.symbol)}`),
     '',
     report.reachedLaunch
       ? ''
@@ -126,7 +127,7 @@ export function renderFloorEntries(report: AnalysisReport, page: number, sort: E
  */
 export function renderProviderEntries(report: AnalysisReport, page: number): string {
   const chain = report.token.chain;
-  const sym = report.token.symbol.trim().toUpperCase();
+  const sym = ticker(report.token.symbol);
 
   if (report.providerEntries.length === 0) {
     return empty(
@@ -246,7 +247,7 @@ function clusterBlock(report: AnalysisReport): string {
 }
 
 export function renderProvenWinners(report: AnalysisReport, page: number): string {
-  const sym = report.token.symbol.trim().toUpperCase();
+  const sym = ticker(report.token.symbol);
 
   if (report.provenWinners.length === 0) {
     // Clusters survive an empty winners list: splitting a position across alts
@@ -318,7 +319,7 @@ export function renderProvenWinners(report: AnalysisReport, page: number): strin
  * coin where most buyers lost, counting wallets would recommend the losing one.
  */
 export function renderWinningPlay(report: AnalysisReport): string {
-  const sym = report.token.symbol.trim().toUpperCase();
+  const sym = ticker(report.token.symbol);
 
   if (report.winningPlays.length === 0) {
     return empty(
@@ -382,7 +383,7 @@ export function renderDiamondHands(report: AnalysisReport, page: number): string
   if (report.diamondHands.length === 0 && report.providerDiamondHands.length > 0) {
     const { slice, info } = paginate(report.providerDiamondHands, page);
     const head = [
-      heading(ICON.diamond, 'DIAMOND HANDS', `$${report.token.symbol.trim().toUpperCase()}`),
+      heading(ICON.diamond, 'DIAMOND HANDS', `$${ticker(report.token.symbol)}`),
       '',
       `<i>Entered at the floor or under ${usd(config.EARLY_MCAP_USD)}, then rode ${config.diamondBuckets[0] ?? 3}x or more before selling anything.</i>`,
       `<i>From first-buyer records; the run is measured against candle highs.</i>`,
@@ -416,7 +417,7 @@ export function renderDiamondHands(report: AnalysisReport, page: number): string
   const { slice, info } = paginate(report.diamondHands, page);
 
   const head = [
-    heading(ICON.diamond, 'DIAMOND HANDS', `$${report.token.symbol.trim().toUpperCase()}`),
+    heading(ICON.diamond, 'DIAMOND HANDS', `$${ticker(report.token.symbol)}`),
     '',
     `<i>Entered at the floor or under ${usd(config.EARLY_MCAP_USD)}, then held while it ran ${config.diamondBuckets[0] ?? 3}x or more before taking any profit.</i>`,
     '',
@@ -452,7 +453,7 @@ export function renderDevCluster(report: AnalysisReport, page: number): string {
   }
 
   const head: string[] = [
-    heading(ICON.dev, 'DEV CLUSTER', `$${report.token.symbol.trim().toUpperCase()}`),
+    heading(ICON.dev, 'DEV CLUSTER', `$${ticker(report.token.symbol)}`),
     '',
     `<b>Deployer</b> <a href="${walletUrl(chain, report.devWallet)}">${esc(shortAddr(report.devWallet, 5, 5))}</a>`,
   ];
@@ -544,7 +545,7 @@ export function renderRelays(report: AnalysisReport, page: number): string {
         });
         return clampMessage(
           [
-            heading(ICON.relay, 'SUPPLY RELAYS', `$${esc(report.token.symbol.trim().toUpperCase())}`),
+            heading(ICON.relay, 'SUPPLY RELAYS', `$${esc(ticker(report.token.symbol))}`),
             '',
             `<i>The full transfer graph needs a replay this coin is too large for. These early wallets moved supply out WITHOUT selling it, which is the source half of a relay — where it went is not traced.</i>`,
             '',
@@ -570,7 +571,7 @@ export function renderRelays(report: AnalysisReport, page: number): string {
   const { slice, info } = paginate(report.supplyRelays, page, 4);
 
   const head = [
-    heading(ICON.relay, 'SUPPLY RELAYS', `$${report.token.symbol.trim().toUpperCase()}`),
+    heading(ICON.relay, 'SUPPLY RELAYS', `$${ticker(report.token.symbol)}`),
     '',
     '<i>An early wallet moved supply to a second address, and that address did the selling. The buyer with the good entry never prints a sell, so the position looks untouched.</i>',
     '',
@@ -613,7 +614,7 @@ export function renderWallet(report: AnalysisReport, ledger: WalletLedger): stri
   const supply = report.token.totalSupply;
   const supplyPct = supply > 0 ? (ledger.peakTokens / supply) * 100 : 0;
   const holdPct = supply > 0 ? (ledger.balanceTokens / supply) * 100 : 0;
-  const sym = report.token.symbol.trim().toUpperCase();
+  const sym = ticker(report.token.symbol);
 
   const lines = [
     `👤 <b>${esc(shortAddr(ledger.wallet, 6, 6))}</b> <i>on $${esc(sym)}</i>`,
@@ -679,7 +680,7 @@ export function renderRisk(report: AnalysisReport): string {
   const v = computeVerdict(report);
   const lines = [
     `${v.icon} <b>RISK ${v.risk}</b> ${ICON.bullet} <b>${v.band}</b>`,
-    `<i>$${esc(report.token.symbol.trim().toUpperCase())}</i>`,
+    `<i>$${esc(ticker(report.token.symbol))}</i>`,
     '',
   ];
 
@@ -768,7 +769,7 @@ export function renderBuyAlert(a: {
   convergence?: { wallets: string[]; totalSolSpent: number; firstTs: number } | null;
   kind?: 'buy' | 'sell' | 'transfer-in' | 'transfer-out';
 }): string {
-  const sym = esc(a.symbol.trim().toUpperCase());
+  const sym = esc(ticker(a.symbol));
   const conv = a.convergence;
   // The verb has to match what happened. A watcher following sells that reads
   // "bought" is worse than no alert at all — it says the opposite of the truth.
