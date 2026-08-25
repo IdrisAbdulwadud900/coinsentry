@@ -94,3 +94,29 @@ describe('HyperEVM is wired into every chain map', () => {
     expect(logChunkFor('hyperevm')).toBeGreaterThanOrEqual(10_000);
   });
 });
+
+describe('Robinhood Chain is wired into every chain map', () => {
+  it('has a spec with the endpoint and quote assets verified live', async () => {
+    const { CHAINS } = await import('../src/data/chains.js');
+    const spec = CHAINS.robinhood;
+    expect(spec.dexScreenerId).toBe('robinhood');
+    expect(spec.nativeSymbol).toBe('ETH');
+    expect(spec.wrappedNative).toBe('0x0bd7d308f8e1639fab988df18a8011f41eacad73');
+    expect(spec.stables.length).toBeGreaterThan(0);
+  });
+
+  it('runs fewer parallel log requests than the default', async () => {
+    // Ten parallel requests lose two on this endpoint, which cost 41% of a
+    // scan. It reports the overload as "Missing or invalid parameters", so it
+    // reads like a bad query rather than back-off.
+    const { logConcurrencyFor } = await import('../src/data/chains.js');
+    expect(logConcurrencyFor('robinhood')).toBeLessThan(logConcurrencyFor('base'));
+  });
+
+  it('resolves the chain and links to its explorer', async () => {
+    const { chainFromDexScreenerId } = await import('../src/data/chains.js');
+    const { walletUrl } = await import('../src/util/format.js');
+    expect(chainFromDexScreenerId('robinhood')).toBe('robinhood');
+    expect(walletUrl('robinhood', '0xabc')).toContain('robinhoodchain.blockscout.com');
+  });
+});

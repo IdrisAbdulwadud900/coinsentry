@@ -186,6 +186,11 @@ const EXPLORER: Record<Chain, { wallet: (a: string) => string; token: (a: string
     token: (a) => `https://etherscan.io/token/${a}`,
     tx: (h) => `https://etherscan.io/tx/${h}`,
   },
+  robinhood: {
+    wallet: (a) => `https://robinhoodchain.blockscout.com/address/${a}`,
+    token: (a) => `https://robinhoodchain.blockscout.com/token/${a}`,
+    tx: (h) => `https://robinhoodchain.blockscout.com/tx/${h}`,
+  },
   hyperevm: {
     wallet: (a) => `https://hyperevmscan.io/address/${a}`,
     token: (a) => `https://hyperevmscan.io/token/${a}`,

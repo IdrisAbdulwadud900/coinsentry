@@ -53,6 +53,7 @@ export const CHAIN_BADGE: Record<Chain, string> = {
   ethereum: '⟠ Ethereum',
   bsc: '⬡ BNB Chain',
   hyperevm: '⬢ HyperEVM',
+  robinhood: '🪶 Robinhood',
   base: '🔵 Base',
 };
 
