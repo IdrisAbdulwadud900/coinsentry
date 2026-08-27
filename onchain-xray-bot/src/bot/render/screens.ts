@@ -84,8 +84,16 @@ export function renderFloorEntries(report: AnalysisReport, page: number, sort: E
         ? `${ICON.warn} <i>The floor below is exact — it is this launchpad's fixed opening price. The wallet list, however, covers only the window the scan reached, so the earliest buyers may be missing.</i>\n`
         : `${ICON.warn} <b>Not the real floor.</b> <i>This token has too many transactions to scan back to its launch, so the figures below describe the window that was read — not the coin's bottom.</i>\n`,
     `<i>Bought inside the floor band ${usd(report.entryBandMin)} – ${usd(report.floorBandMax)}, or under ${usd(config.EARLY_MCAP_USD)} market cap.</i>`,
+    // Two different reasons the band can sit above the floor, and the honest
+    // one depends on coverage. With the whole range read, the lowest print
+    // really was a sell nobody could buy at. With part of it missing, the
+    // lowest BUY may simply be in the part that went unread — and asserting a
+    // sell there claims more than the scan knows. One token showed a correct
+    // $4,497 floor beside a $238,052 band for exactly this reason.
     report.entryBandRebased
-      ? `<i>The coin's lowest print was ${usd(report.floorMcap)}, but that was a sell — no buyer could reach it. The band starts at the lowest real entry instead.</i>`
+      ? report.coverageComplete
+        ? `<i>The coin's lowest print was ${usd(report.floorMcap)}, but that was a sell — no buyer could reach it. The band starts at the lowest real entry instead.</i>`
+        : `<i>The coin's lowest print was ${usd(report.floorMcap)}, but the lowest BUY found was ${usd(report.entryBandMin)}. Part of the range went unread, so earlier buyers may exist below this band rather than not at all.</i>`
       : '',
     `<i>Positions under ${usd(minPositionUsd(report.floorMcap))} are hidden ${ICON.bullet} sorted: ${esc(sortLabel)}</i>`,
     '',

@@ -39,6 +39,12 @@ const schema = z.object({
    */
   EVM_SCAN_BUDGET_MS: num(90_000),
   /**
+   * Extra time retries may use after the main pass's deadline. Bounded, so a
+   * scan cannot overrun indefinitely, but non-zero, because abandoning the
+   * repair wastes everything the main pass already read.
+   */
+  EVM_RETRY_GRACE_MS: num(60_000),
+  /**
    * Concurrent eth_getLogs requests.
    *
    * Measured against mainnet.base.org 2026-08-17: 10 concurrent completed

@@ -507,6 +507,9 @@ export async function analyzeToken(
     tradeCount: history.trades.length,
     uniqueWallets: ledgers.size,
     truncated: history.truncated,
+    // Every block the scan meant to read came back. An absence is only evidence
+    // of absence when this is true.
+    coverageComplete: history.lostChunks === 0,
     coverageFrom: history.coverageFrom,
     reachedLaunch: history.reachedLaunch,
     mcapSeries: curve.series(24),
@@ -690,6 +693,8 @@ interface History {
   supplyTransfers: SupplyTransfer[];
   fundingTransfers: FundingTransfer[];
   truncated: boolean;
+  /** Blocks the scan meant to read but never got, so absences stay ambiguous. */
+  lostChunks: number;
   coverageFrom: number;
   reachedLaunch: boolean;
   providerFirstBuyers: FirstBuyer[];
@@ -724,6 +729,7 @@ async function loadSolanaHistory(
       supplyTransfers: [],
       fundingTransfers: [],
       truncated: trades.length >= 3000,
+      lostChunks: 0,
       coverageFrom: trades[0]?.ts ?? 0,
       reachedLaunch: trades.length < 3000,
       providerFirstBuyers,
@@ -861,6 +867,7 @@ async function loadSolanaHistory(
     truncated,
     coverageFrom: parsed.trades[0]?.ts ?? 0,
     reachedLaunch,
+    lostChunks: 0,
     providerFirstBuyers,
   };
 }
@@ -999,6 +1006,7 @@ async function loadEvmHistory(
     supplyTransfers: res.supplyTransfers,
     fundingTransfers: res.fundingTransfers,
     truncated: res.truncated,
+    lostChunks: res.lostChunks,
     coverageFrom: res.coverageFrom,
     // Anchored at pair creation and walked forward — but only actually covering
     // the launch if the chunk budget did not run out on the way. Treating a
@@ -1029,6 +1037,7 @@ async function loadProviderOnlyHistory(meta: TokenMeta, warnings: string[]): Pro
     supplyTransfers: [],
     fundingTransfers: [],
     truncated: false,
+    lostChunks: 0,
     coverageFrom: meta.createdAt ?? 0,
     // The provider's first-buyer record starts at the true first buy.
     reachedLaunch: providerFirstBuyers.length > 0,

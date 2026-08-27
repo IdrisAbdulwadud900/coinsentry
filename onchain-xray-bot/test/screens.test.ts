@@ -181,3 +181,29 @@ describe('a familiar wallet is marked where it appears', () => {
     expect(renderFloorEntries(report, 0, 'earliest')).not.toContain('you scanned');
   });
 });
+
+describe('a rebased band explains itself honestly', () => {
+  const rebased = (coverageComplete: boolean) =>
+    makeReport({
+      floorMcap: 4_497,
+      entryBandMin: 238_052,
+      floorBandMax: 400_000,
+      entryBandRebased: true,
+      coverageComplete,
+    });
+
+  it('blames a sell only when the whole range was read', async () => {
+    const { renderFloorEntries } = await import('../src/bot/render/screens.js');
+    expect(renderFloorEntries(rebased(true), 0, 'earliest')).toContain('that was a sell');
+  });
+
+  it('says buyers may exist below when part went unread', async () => {
+    // A correct $4,497 floor beside a $238,052 band reads as a contradiction.
+    // With coverage missing, the lowest buy may be in the unread part rather
+    // than absent — asserting a sell claims more than the scan knows.
+    const { renderFloorEntries } = await import('../src/bot/render/screens.js');
+    const html = renderFloorEntries(rebased(false), 0, 'earliest');
+    expect(html).toContain('went unread');
+    expect(html).not.toContain('that was a sell');
+  });
+});

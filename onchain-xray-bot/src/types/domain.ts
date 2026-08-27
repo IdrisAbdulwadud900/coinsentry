@@ -350,6 +350,13 @@ export interface AnalysisReport {
    */
   repeatOffenders: RepeatOffender[];
 
+  /**
+   * True when the scan read every block it set out to. False makes an absence
+   * ambiguous — a missing early buyer may be missing from the DATA rather than
+   * from the chain — and several screens soften what they claim because of it.
+   */
+  coverageComplete: boolean;
+
   /** Per-module warnings surfaced in the UI (missing key, partial data...). */
   warnings: string[];
 }

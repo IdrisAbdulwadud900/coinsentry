@@ -154,6 +154,7 @@ export function makeReport(over: Partial<AnalysisReport> = {}): AnalysisReport {
     tradeCount: 1_500,
     uniqueWallets: 400,
     truncated: false,
+    coverageComplete: true,
     coverageFrom: 1_000,
     reachedLaunch: true,
     mcapSeries: [2_200, 5_000, 12_000, 30_000],
