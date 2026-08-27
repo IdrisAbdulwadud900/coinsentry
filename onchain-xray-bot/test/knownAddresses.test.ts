@@ -120,3 +120,20 @@ describe('Robinhood Chain is wired into every chain map', () => {
     expect(walletUrl('robinhood', '0xabc')).toContain('robinhoodchain.blockscout.com');
   });
 });
+
+describe('per-chain scan budgets', () => {
+  it('spends fewer log requests on a chain that cannot finish the default', async () => {
+    // Robinhood Chain runs at 101ms, so the usual budget asks for two million
+    // blocks its endpoint cannot serve in the time allowed. Enforcing the
+    // deadline left 49% unread; letting retries run took 623s for a Telegram
+    // message. A narrower window it can actually finish beats both.
+    const { maxLogChunksFor } = await import('../src/data/chains.js');
+    expect(maxLogChunksFor('robinhood')).toBeLessThan(maxLogChunksFor('base'));
+  });
+
+  it('leaves every other chain on the default', async () => {
+    const { maxLogChunksFor } = await import('../src/data/chains.js');
+    expect(maxLogChunksFor('base')).toBe(maxLogChunksFor('ethereum'));
+    expect(maxLogChunksFor('hyperevm')).toBe(maxLogChunksFor('bsc'));
+  });
+});
