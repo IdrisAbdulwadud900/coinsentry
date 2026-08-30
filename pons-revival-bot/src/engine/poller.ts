@@ -773,6 +773,8 @@ export interface PollerDeps {
   enabledChains: string[];
   /** Watch DEX pool factories directly, catching tokens launched outside Pons. */
   dexPoolDiscoveryEnabled: boolean;
+  /** Restrict scanning and alerting to the two Pons launchpad factories. */
+  ponsLaunchpadOnly: boolean;
   /** Per-chain pool-factory scanning setup (Robinhood, plus BSC/Ethereum when configured). */
   poolChainConfigs: ChainPoolConfig[];
   /** Blockscout-compatible holder/metadata APIs, keyed by chain. Robinhood and Ethereum
@@ -2143,7 +2145,11 @@ export async function runPollCycle(deps: PollerDeps): Promise<void> {
   logHeap(deps, "after-discovery-steps");
   logHeap(deps, "before-market-scan");
   const focused = activeChains(deps);
-  const tracked = tokenRepo.listTrackableForCycle(deps.marketScanBatchSize, focused.length === 1 ? focused : undefined);
+  const tracked = tokenRepo.listTrackableForCycle(
+    deps.marketScanBatchSize,
+    focused.length === 1 ? focused : undefined,
+    deps.ponsLaunchpadOnly
+  );
   logHeap(deps, "after-load-tracked", { tracked: tracked.length });
   if (tracked.length === 0) {
     logger.info("No trackable tokens yet");

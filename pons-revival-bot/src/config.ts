@@ -95,6 +95,12 @@ const ConfigSchema = z.object({
   // Robinhood tokens are launched straight onto a DEX and never touch Pons, so without
   // this they were completely invisible (see src/data/dexPoolDiscovery.ts).
   DEX_POOL_DISCOVERY_ENABLED: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
+  // Restricts every scan and alert to coins from the two Pons launchpad factories (v1 and
+  // v2). Watching the chain's DEX pools directly pulled in essentially the whole chain —
+  // 458,000 tokens against roughly 20,000 launchpad coins — and the per-cycle budget was
+  // spread across all of it, so launchpad coins were revisited rarely. With this on, the
+  // budget covers the launchpad repeatedly instead of the chain thinly.
+  PONS_LAUNCHPAD_ONLY: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
   // Blocks per getLogs call for the pool scan. ~101ms blocks means 20k ≈ 34 minutes, and
   // this RPC serves that range comfortably.
   DEX_POOL_CHUNK_BLOCKS: z.coerce.number().int().positive().default(20_000),

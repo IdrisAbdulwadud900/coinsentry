@@ -96,7 +96,12 @@ export class TokenRepo {
    * are re-checked every single cycle, giving the fastest possible revival detection),
    * then everything else round-robins oldest-checked-first so no token ever starves.
    */
-  listTrackableForCycle(limit: number, chains?: string[]): TokenRow[] {
+  listTrackableForCycle(limit: number, chains?: string[], ponsOnly = false): TokenRow[] {
+    // Pons-only mode narrows the scan to coins that came from the two Pons launchpad
+    // factories, ignoring everything discovered by watching DEX pools directly. Those DEX
+    // scans pulled in the whole chain — 458,000 tokens against roughly 20,000 launchpad
+    // coins — and the scan budget was spread across all of it.
+    const ponsFilter = ponsOnly ? " AND t.factory_address IS NOT NULL" : "";
     // Focus mode narrows the scan to one chain, which spends the whole per-cycle budget
     // there instead of spreading it — the same budget then revisits each of that chain's
     // coins far more often.
@@ -106,7 +111,7 @@ export class TokenRepo {
         .prepare<(string | number)[], TokenRow>(
           // Same activity-first ordering as the unfocused path below; see the comment there.
           `SELECT t.* FROM tokens t
-           WHERE t.status != 'unindexed' AND t.chain IN (${placeholders})
+           WHERE t.status != 'unindexed' AND t.chain IN (${placeholders})${ponsFilter}
            ORDER BY (CASE WHEN t.last_traded_at > ? THEN 0 ELSE 1 END) ASC,
                     (CASE WHEN t.status IN ('dead', 'alerted') THEN 0 ELSE 1 END) ASC,
                     COALESCE(t.market_checked_at, 0) ASC
@@ -128,7 +133,7 @@ export class TokenRepo {
         // scan that comes round every 40. The tail still round-robins oldest-first behind
         // the hot set, so nothing starves.
         `SELECT t.* FROM tokens t
-         WHERE t.status != 'unindexed'
+         WHERE t.status != 'unindexed'${ponsFilter}
          ORDER BY (CASE WHEN t.last_traded_at > ? THEN 0 ELSE 1 END) ASC,
                   (CASE WHEN t.status IN ('dead', 'alerted') THEN 0 ELSE 1 END) ASC,
                   COALESCE(t.market_checked_at, 0) ASC

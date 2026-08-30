@@ -66,7 +66,7 @@ primary_region = "iad"
   # stays under that. Because the hot set sorts first and rotates oldest-checked within
   # itself, the ~1,300 genuinely active coins are each revisited about hourly — against
   # roughly every 40 hours before this ordering existed.
-  MARKET_SCAN_BATCH_SIZE = "4000"
+  MARKET_SCAN_BATCH_SIZE = "2000"
 
   DEAD_MIN_AGE_HOURS = "24"
   DEAD_VOLUME_24H_USD = "500"
@@ -84,7 +84,14 @@ primary_region = "iad"
   SNAPSHOT_RETENTION_DAYS = "7"
 
   ROBINHOOD_CHAIN_ID_DEXSCREENER = "robinhood"
-  ENABLED_CHAINS = "robinhood,solana,bsc,ethereum,hyperevm"
+  # Pons launchpad only, on Robinhood. Other chains and the direct DEX-pool scans are off:
+  # they pulled in the whole chain (458,000 tokens against ~20,000 launchpad coins) and the
+  # scan budget was spread across all of it.
+  ENABLED_CHAINS = "robinhood"
+  # Direct DEX-pool scanning off: it is what pulled the whole chain in. Only the two Pons
+  # launchpad factories (v1 and v2) are discovered and scanned now.
+  DEX_POOL_DISCOVERY_ENABLED = "false"
+  PONS_LAUNCHPAD_ONLY = "true"
   ROBINHOOD_RPC_URL = "https://rpc.mainnet.chain.robinhood.com"
   PONS_FACTORY_ACTIVE = "0xA5aAb3F0c6EeadF30Ef1D3Eb997108E976351feB"
   PONS_FACTORY_ACTIVE_START_BLOCK = "8991118"

@@ -424,3 +424,23 @@ tokenRepo.markTraded("0xb0770000000000000000000000000000000000bb", now - 60000);
     expect(order[0]).toBe("0xb0770000000000000000000000000000000000bb");
   });
 });
+
+describe("Pons-launchpad-only scanning", () => {
+  // Watching DEX pools directly pulled in essentially the whole chain — 458,000 tokens
+  // against ~20,000 launchpad coins — so the per-cycle budget was spread across all of it
+  // and launchpad coins were revisited rarely.
+  it("scans only launchpad coins when restricted, and everything otherwise", () => {
+    const db = openDatabase(":memory:");
+    const tokenRepo = new TokenRepo(db);
+    const now = Date.now();
+
+    tokenRepo.insertIfNew("0xaa00000000000000000000000000000000000001", "PONS", "Pons", "0xp1", "active", null, "0xFactoryV1", now - 7200000);
+    tokenRepo.insertIfNew("0xbb00000000000000000000000000000000000002", "DEX", "Dex", "0xp2", "active", null, null, now - 7200000);
+
+    const ponsOnly = tokenRepo.listTrackableForCycle(50, undefined, true).map((t) => t.symbol);
+    expect(ponsOnly).toEqual(["PONS"]);
+
+    const all = tokenRepo.listTrackableForCycle(50, undefined, false).map((t) => t.symbol).sort();
+    expect(all).toEqual(["DEX", "PONS"]);
+  });
+});

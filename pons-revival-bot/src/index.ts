@@ -144,6 +144,7 @@ async function main(): Promise<void> {
     minLiquidityToMcapPct: config.MIN_LIQUIDITY_TO_MCAP_PCT,
     enabledChains,
     dexPoolDiscoveryEnabled: config.DEX_POOL_DISCOVERY_ENABLED,
+    ponsLaunchpadOnly: config.PONS_LAUNCHPAD_ONLY,
     poolChainConfigs: buildPoolChainConfigs({
       robinhood: config.ROBINHOOD_RPC_URL,
       bsc: config.BSC_RPC_URL || undefined,
