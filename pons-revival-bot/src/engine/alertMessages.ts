@@ -4,6 +4,7 @@ import type { HolderConcentration } from "../data/blockscoutClient.js";
 import type { EarlyBuyConcentrationResult } from "../data/chainClient.js";
 import { chainBadge } from "../data/chains.js";
 import type { SolanaMintSafety } from "../data/solanaClient.js";
+import type { XMention } from "../data/xSearchClient.js";
 
 /** Real early-buyer concentration ("bundle %"), plus the block window it was computed
  * over so the alert line can show its own scope (e.g. "first 500 blocks"). */
@@ -92,6 +93,47 @@ function formatBuySellLine(windowLabel: string, buys: number, sells: number | nu
     return line("🛒", `Buys/Sells (${windowLabel})`, `${buys} / ${sells}`);
   }
   return line("🛒", `Buys (${windowLabel})`, String(buys));
+}
+
+/**
+ * Breaks the top holders into position sizes, so "top 10 hold 42%" becomes something a
+ * trader can act on: ten $500 wallets and one $80,000 wallet are the same percentage and
+ * completely different risks.
+ *
+ * Each holder's position is priced exactly, with no extra API calls: a wallet's share of
+ * supply multiplied by the coin's market cap *is* the USD value of what it holds, and both
+ * numbers are already in hand. Returns undefined when market cap is unknown or untrusted
+ * rather than showing dollar figures derived from a price nothing backs.
+ */
+function formatWhaleBreakdownLine(
+  concentration: HolderConcentration | null | undefined,
+  marketCapUsd: number | null | undefined
+): string | undefined {
+  if (!concentration || marketCapUsd == null || marketCapUsd <= 0) return undefined;
+  const holders = concentration.topHolders ?? [];
+  if (holders.length === 0) return undefined;
+
+  let mega = 0; // >= $100k
+  let whale = 0; // >= $10k
+  let trader = 0; // >= $1k
+  let small = 0; // below $1k
+  let biggestUsd = 0;
+  for (const holder of holders) {
+    const usd = (holder.pct / 100) * marketCapUsd;
+    if (usd > biggestUsd) biggestUsd = usd;
+    if (usd >= 100_000) mega += 1;
+    else if (usd >= 10_000) whale += 1;
+    else if (usd >= 1_000) trader += 1;
+    else small += 1;
+  }
+
+  const parts: string[] = [];
+  if (mega > 0) parts.push(`🐋 ${mega} over $100k`);
+  if (whale > 0) parts.push(`🐳 ${whale} over $10k`);
+  if (trader > 0) parts.push(`🐟 ${trader} over $1k`);
+  if (small > 0) parts.push(`🦐 ${small} under $1k`);
+  if (parts.length === 0) return undefined;
+  return `${parts.join(" · ")} · biggest <b>${formatUsd(biggestUsd)}</b>`;
 }
 
 /** "🐳 Top 10 Holders: 42% of supply" line, colored by concentration severity (🐳 normal,
@@ -256,6 +298,50 @@ function subHeader(token: TokenRow, ageText?: string): string | undefined {
  * "Mint/Freeze: ✅ Both revoked" — so the lines that mattered were buried among lines that
  * didn't. Silence here now means nothing was flagged.
  */
+/**
+ * Which X accounts have posted this contract address, biggest first.
+ *
+ * Follower counts are the point: five throwaway accounts and one 90,000-follower account
+ * are very different signals about who is behind a coin. Rendered only when the lookup
+ * actually succeeded — a failed or unconfigured search omits the line entirely rather than
+ * implying nobody is talking about the coin.
+ */
+function formatXMentionsLine(mentions: XMention[] | null | undefined): string | undefined {
+  if (mentions == null || mentions.length === 0) return undefined;
+  const shown = mentions.slice(0, 4).map((m) => {
+    const followers = m.followers != null ? ` <i>(${formatCompactCount(m.followers)})</i>` : "";
+    return `<a href="${m.tweetUrl}">@${m.username}</a>${followers}`;
+  });
+  const extra = mentions.length > shown.length ? ` +${mentions.length - shown.length} more` : "";
+  return `🐦 posted by ${shown.join(" · ")}${extra}`;
+}
+
+/** 90000 -> "90k", 1200000 -> "1.2M". Follower counts are read at a glance, not audited. */
+function formatCompactCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+  return String(n);
+}
+
+/**
+ * Holder picture on every alert: concentration plus who is actually holding.
+ *
+ * The risk line below only mentions holders once concentration passes 50%, which hides the
+ * information for the majority of coins where it is still worth seeing. This always renders
+ * when the data resolved, and stays silent rather than guessing when it did not.
+ */
+function formatHoldersLine(
+  holders: HolderConcentration | null | undefined,
+  marketCapUsd: number | null | undefined
+): string | undefined {
+  if (!holders) return undefined;
+  const pct = holders.top10Pct;
+  const icon = pct >= 80 ? "🚨" : pct >= 50 ? "⚠️" : "🐳";
+  const breakdown = formatWhaleBreakdownLine(holders, marketCapUsd);
+  const head = `${icon} top 10 hold <b>${pct.toFixed(0)}%</b>`;
+  return breakdown ? `${head} · ${breakdown}` : head;
+}
+
 function formatRiskLine(
   devStatus: DevStatus | null | undefined,
   holders: HolderConcentration | null | undefined,
@@ -266,7 +352,9 @@ function formatRiskLine(
   if (devStatus && !devStatus.sold) {
     flags.push(devStatus.holdingPct != null ? `👤 dev holds ${devStatus.holdingPct.toFixed(0)}%` : "👤 dev holding");
   }
-  if (holders && holders.top10Pct >= 50) flags.push(`🐳 top 10 hold ${holders.top10Pct.toFixed(0)}%`);
+  // Holder concentration is not repeated here: formatHoldersLine now reports it on every
+  // alert, with position sizes, so duplicating it in the risk flags said the same thing
+  // twice in consecutive lines.
   if (earlyBuy && earlyBuy.top5Pct >= 40) flags.push(`🎯 bundle ${earlyBuy.top5Pct.toFixed(0)}%`);
   if (solana?.freezeAuthorityActive) flags.push("🚨 freeze authority live");
   if (solana?.mintAuthorityActive) flags.push("⚠️ mint authority live");
@@ -339,7 +427,9 @@ export function buildRevivalAlertHtml(
   holderConcentration?: HolderConcentration | null,
   earlyBuyConcentration?: EarlyBuyConcentration | null,
   solanaSafety?: SolanaMintSafety | null,
-  conviction?: string | null
+  conviction?: string | null,
+  /** X accounts that posted this contract address; null when the lookup could not run. */
+  xMentions?: XMention[] | null
 ): string {
   const dexUrl = `https://dexscreener.com/${dexScreenerChainId}/${current.pairAddress}`;
   const volume1h = current.volume1h ?? 0;
@@ -361,7 +451,11 @@ export function buildRevivalAlertHtml(
       `💧 <i>${liquidityPct.toFixed(0)}% of median liq</i>`
     ),
   ];
-  const risk = [formatRiskLine(devStatus, holderConcentration, earlyBuyConcentration, solanaSafety)];
+  const risk = [
+    formatHoldersLine(holderConcentration, marketCapUsd),
+    formatXMentionsLine(xMentions),
+    formatRiskLine(devStatus, holderConcentration, earlyBuyConcentration, solanaSafety),
+  ];
   const performance = [joinLine(formatSinceAlertCompact(token, marketCapUsd), formatAthCompact(token, marketCapUsd))];
   const footer = [formatFooterLinks(dexUrl, current), `<code>${token.address}</code>`];
 
@@ -384,7 +478,9 @@ export function buildGraduationAlertHtml(
   holderConcentration?: HolderConcentration | null,
   earlyBuyConcentration?: EarlyBuyConcentration | null,
   solanaSafety?: SolanaMintSafety | null,
-  conviction?: string | null
+  conviction?: string | null,
+  /** X accounts that posted this contract address; null when the lookup could not run. */
+  xMentions?: XMention[] | null
 ): string {
   const dexUrl = `https://dexscreener.com/${dexScreenerChainId}/${token.pair_address}`;
   const paired = weiToEthString(pairedWei);
@@ -396,7 +492,11 @@ export function buildGraduationAlertHtml(
     subHeader(token),
     joinLine(frag("💰", formatUsd(resolvedMcap), "mcap"), `🌱 <b>${paired}</b>/${threshold} ETH paired`),
   ];
-  const risk = [formatRiskLine(devStatus, holderConcentration, earlyBuyConcentration, solanaSafety)];
+  const risk = [
+    formatHoldersLine(holderConcentration, marketCapUsd),
+    formatXMentionsLine(xMentions),
+    formatRiskLine(devStatus, holderConcentration, earlyBuyConcentration, solanaSafety),
+  ];
   const performance = [joinLine(formatSinceAlertCompact(token, resolvedMcap), formatAthCompact(token, resolvedMcap))];
   const footer = [formatFooterLinks(dexUrl, snapshot), `<code>${token.address}</code>`];
 
@@ -422,7 +522,9 @@ export function buildMarketCapAlertHtml(
   holderConcentration?: HolderConcentration | null,
   earlyBuyConcentration?: EarlyBuyConcentration | null,
   solanaSafety?: SolanaMintSafety | null,
-  conviction?: string | null
+  conviction?: string | null,
+  /** X accounts that posted this contract address; null when the lookup could not run. */
+  xMentions?: XMention[] | null
 ): string {
   const fmtTier = (n: number) => `$${n.toLocaleString("en-US")}`;
   const tierLine =
@@ -440,7 +542,11 @@ export function buildMarketCapAlertHtml(
     joinLine(frag("💰", formatUsd(marketCapUsd), "mcap"), tierLine),
     curveLine,
   ];
-  const risk = [formatRiskLine(devStatus, holderConcentration, earlyBuyConcentration, solanaSafety)];
+  const risk = [
+    formatHoldersLine(holderConcentration, marketCapUsd),
+    formatXMentionsLine(xMentions),
+    formatRiskLine(devStatus, holderConcentration, earlyBuyConcentration, solanaSafety),
+  ];
   const performance = [joinLine(formatSinceAlertCompact(token, marketCapUsd), formatAthCompact(token, marketCapUsd))];
   const footer = [formatFooterLinks(dexUrl, snapshot), `<code>${token.address}</code>`];
 
@@ -464,7 +570,9 @@ export function buildMomentumAlertHtml(
   holderConcentration?: HolderConcentration | null,
   earlyBuyConcentration?: EarlyBuyConcentration | null,
   solanaSafety?: SolanaMintSafety | null,
-  conviction?: string | null
+  conviction?: string | null,
+  /** X accounts that posted this contract address; null when the lookup could not run. */
+  xMentions?: XMention[] | null
 ): string {
   const dexUrl = `https://dexscreener.com/${dexScreenerChainId}/${current.pairAddress}`;
   const buys5m = current.buys5m ?? 0;
@@ -484,7 +592,11 @@ export function buildMomentumAlertHtml(
       frag("📊", formatUsd(volume5m), "vol (5m)")
     ),
   ];
-  const risk = [formatRiskLine(devStatus, holderConcentration, earlyBuyConcentration, solanaSafety)];
+  const risk = [
+    formatHoldersLine(holderConcentration, marketCapUsd),
+    formatXMentionsLine(xMentions),
+    formatRiskLine(devStatus, holderConcentration, earlyBuyConcentration, solanaSafety),
+  ];
   const performance = [joinLine(formatSinceAlertCompact(token, marketCapUsd), formatAthCompact(token, marketCapUsd))];
   const footer = [formatFooterLinks(dexUrl, current), `<code>${token.address}</code>`];
 
@@ -509,7 +621,9 @@ export function buildPerformanceMilestoneAlertHtml(
   holderConcentration?: HolderConcentration | null,
   earlyBuyConcentration?: EarlyBuyConcentration | null,
   solanaSafety?: SolanaMintSafety | null,
-  conviction?: string | null
+  conviction?: string | null,
+  /** X accounts that posted this contract address; null when the lookup could not run. */
+  xMentions?: XMention[] | null
 ): string {
   const baseline = token.first_alert_market_cap_usd ?? 0;
   const dexUrl = `https://dexscreener.com/${dexScreenerChainId}/${pairAddress}`;
@@ -525,7 +639,11 @@ export function buildPerformanceMilestoneAlertHtml(
     joinLine(`🎯 entry <b>${formatUsd(baseline)}</b>`, `💰 now <b>${formatUsd(marketCapUsd)}</b>`),
     joinLine(milestoneLine, `🏆 peak <b>${token.peak_multiple.toFixed(1)}x</b>`),
   ];
-  const risk = [formatRiskLine(devStatus, holderConcentration, earlyBuyConcentration, solanaSafety)];
+  const risk = [
+    formatHoldersLine(holderConcentration, marketCapUsd),
+    formatXMentionsLine(xMentions),
+    formatRiskLine(devStatus, holderConcentration, earlyBuyConcentration, solanaSafety),
+  ];
   const footer = [formatFooterLinks(dexUrl, snapshot), `<code>${token.address}</code>`];
 
   return renderMessage(header, core, risk, footer, [DISCLAIMER]);
@@ -579,7 +697,9 @@ export function buildBreakoutAlertHtml(
   devStatus?: DevStatus | null,
   holderConcentration?: HolderConcentration | null,
   earlyBuyConcentration?: EarlyBuyConcentration | null,
-  solanaSafety?: SolanaMintSafety | null
+  solanaSafety?: SolanaMintSafety | null,
+  /** X accounts that posted this contract address; null when the lookup could not run. */
+  xMentions?: XMention[] | null
 ): string {
   const dexUrl = `https://dexscreener.com/${dexScreenerChainId}/${current.pairAddress}`;
   const volume1h = current.volume1h ?? 0;
@@ -596,7 +716,11 @@ export function buildBreakoutAlertHtml(
     ),
     current.sells1h != null ? `🛒 <b>${buys1h}</b>/<b>${current.sells1h}</b> buys/sells (1h)` : `🛒 <b>${buys1h}</b> buys (1h)`,
   ];
-  const risk = [formatRiskLine(devStatus, holderConcentration, earlyBuyConcentration, solanaSafety)];
+  const risk = [
+    formatHoldersLine(holderConcentration, marketCapUsd),
+    formatXMentionsLine(xMentions),
+    formatRiskLine(devStatus, holderConcentration, earlyBuyConcentration, solanaSafety),
+  ];
   const performance = [joinLine(formatSinceAlertCompact(token, marketCapUsd), formatAthCompact(token, marketCapUsd))];
   const footer = [formatFooterLinks(dexUrl, current), `<code>${token.address}</code>`];
 

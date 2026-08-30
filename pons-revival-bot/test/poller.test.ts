@@ -1609,12 +1609,11 @@ describe("Solana new-pair conviction is consistent end to end", () => {
 
     await runMomentumFastSweep(deps, now);
 
-    // Previously this promoted a clean Solana new pair to "high" and alerted. New pairs are
-    // now out of scope entirely — nothing under MIN_ALERT_AGE_MINUTES alerts, however good
-    // its audit looks — so the age floor takes precedence over the conviction promotion and
-    // no outcome is recorded at all.
-    expect(sendAlert).not.toHaveBeenCalled();
-    expect(outcomeRepo.findByAddress(SOL)).toBeUndefined();
+    // New pairs are in scope again (MIN_ALERT_AGE_MINUTES is 0), so a clean audit promotes
+    // this to "high" and it alerts. The stored rating must match the verdict that let it
+    // through, or /insights learns from a label contradicting the decision.
+    expect(sendAlert).toHaveBeenCalledTimes(1);
+    expect(outcomeRepo.findByAddress(SOL)?.conviction).toBe("high");
   });
 
   it("blocks a bundled Solana new pair at the same floor", async () => {

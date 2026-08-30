@@ -50,6 +50,7 @@ import { runMultiChainDiscovery } from "../data/multiChainDiscovery.js";
 import { runDexPoolDiscovery, type ChainPoolConfig } from "../data/dexPoolDiscovery.js";
 import { runSolanaDiscovery } from "../data/solanaDiscovery.js";
 import type { JupiterClient } from "../data/jupiterClient.js";
+import type { XSearchClient, XMention } from "../data/xSearchClient.js";
 import type { DexPair } from "../types/dexscreener.js";
 import type { OutcomeRepo, AlertOutcomeRow } from "../data/outcomeRepo.js";
 
@@ -115,7 +116,16 @@ const MIN_ALERT_BUYS_1H = 5;
  * a launch that is minutes old is noise regardless of how good its numbers look. This is a
  * hard floor applied to every alert path, including breakouts.
  */
-const MIN_ALERT_AGE_MINUTES = 60;
+/**
+ * Minimum age before a coin may alert. Zero means new pairs are in scope again.
+ *
+ * This was 60 while the strategy was "established coins being suddenly bid, not new
+ * pairs". The goal has since widened to catching anything with volume — sub-$10k lowcaps
+ * and fresh ~$10k pairs alike — so an age floor now excludes half of what is wanted. The
+ * quality gates that actually matter (liquidity, live buyers, honeypot and bundle checks)
+ * are unaffected and still apply to every coin.
+ */
+const MIN_ALERT_AGE_MINUTES = 0;
 
 /**
  * Ceiling for signals about *established* coins — breakouts and momentum.
@@ -784,6 +794,8 @@ export interface PollerDeps {
   solanaClient: SolanaClient;
   /** Jupiter token API, the free source that surfaces Solana tokens at birth. */
   jupiterClient: JupiterClient;
+  /** Optional X search; unconfigured means alerts omit the mentions line. */
+  xSearchClient?: XSearchClient;
   /** A Solana deployer with more lifetime mints than this is treated as a spam farm. */
   solanaSpamDevMints: number;
   /** Lowest conviction rating allowed through ("low" = everything, preserving coverage). */
@@ -907,6 +919,20 @@ function hasPriorAlertSignal(token: TokenRow): boolean {
  * entirely — when there's no deployer address on record or the read fails; never
  * fabricates a status or percentage.
  */
+/**
+ * Looks up which X accounts posted this coin's contract address.
+ *
+ * Runs only at the point an alert is actually being sent — never during the scan — so the
+ * cost is a handful of calls a day rather than one per coin per cycle. Returns null when
+ * the search is unconfigured or failed, which the alert renders as "no line" rather than
+ * "nobody is talking about this".
+ */
+async function resolveXMentions(deps: PollerDeps, token: TokenRow): Promise<XMention[] | null> {
+  const client = deps.xSearchClient;
+  if (!client || !client.configured) return null;
+  return client.findMentions(token.address);
+}
+
 async function resolveDevStatus(deps: PollerDeps, token: TokenRow): Promise<DevStatus | null> {
   // Reads the Robinhood RPC — meaningless for a token on another chain.
   if (!hasOnChainIntegrations(token.chain)) return null;
@@ -1203,6 +1229,7 @@ async function handleDeadToken(deps: PollerDeps, token: TokenRow, current: Retur
     tokenRepo.setLastAlertAt(token.address, now);
     return;
   }
+  const revivalXMentions = await resolveXMentions(deps, token);
   const html = buildRevivalAlertHtml(
     token,
     current,
@@ -1214,7 +1241,8 @@ async function handleDeadToken(deps: PollerDeps, token: TokenRow, current: Retur
     holderConcentration,
     earlyBuyConcentration,
     solanaSafety,
-    rateConviction(token.chain, alertAgeMinutes(token, now), solanaSafety)
+    rateConviction(token.chain, alertAgeMinutes(token, now), solanaSafety),
+    revivalXMentions
   );
 
   maybeCaptureFirstAlertBaseline(deps, token, resolveMarketCapUsd(current), now);
@@ -1346,6 +1374,7 @@ async function handleBreakoutCandidate(
   tokenRepo.setBreakoutAlertedAt(token.address, now);
   maybeCaptureFirstAlertBaseline(deps, token, resolveMarketCapUsd(current), now);
 
+  const xMentions = await resolveXMentions(deps, token);
   const html = buildBreakoutAlertHtml(
     token,
     current,
@@ -1355,7 +1384,8 @@ async function handleBreakoutCandidate(
     devStatus,
     holderConcentration,
     earlyBuyConcentration,
-    solanaSafety
+    solanaSafety,
+    xMentions
   );
   if (dryRunAlerts) {
     logger.info({ address: token.address, symbol: token.symbol, html }, "[DRY RUN] Would send breakout alert");
@@ -1932,6 +1962,7 @@ export async function runMomentumFastSweep(deps: PollerDeps, now: number): Promi
       recordGateBlock(deps, token, "momentum", safetyBlock);
       continue;
     }
+    const momentumXMentions = await resolveXMentions(deps, token);
     const html = buildMomentumAlertHtml(
       token,
       current,
@@ -1943,7 +1974,8 @@ export async function runMomentumFastSweep(deps: PollerDeps, now: number): Promi
       holderConcentration,
       earlyBuyConcentration,
       solanaSafety,
-      rateConviction(token.chain, alertAgeMinutes(token, now), solanaSafety)
+      rateConviction(token.chain, alertAgeMinutes(token, now), solanaSafety),
+      momentumXMentions
     );
     if (dryRunAlerts) {
       logger.info({ address: token.address, symbol: token.symbol, html }, "[DRY RUN] Would send momentum alert");

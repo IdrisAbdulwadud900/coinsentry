@@ -101,6 +101,11 @@ const ConfigSchema = z.object({
   // spread across all of it, so launchpad coins were revisited rarely. With this on, the
   // budget covers the launchpad repeatedly instead of the chain thinly.
   PONS_LAUNCHPAD_ONLY: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
+  // Bearer token for X (Twitter) API v2 recent search, used to list the accounts that have
+  // posted a coin's contract address. X removed free search access in 2023, so this needs a
+  // paid tier; left blank, alerts simply omit the section rather than implying nobody has
+  // posted about a coin when the truth is that we could not look.
+  X_BEARER_TOKEN: z.string().optional().or(z.literal("")).default(""),
   // Blocks per getLogs call for the pool scan. ~101ms blocks means 20k ≈ 34 minutes, and
   // this RPC serves that range comfortably.
   DEX_POOL_CHUNK_BLOCKS: z.coerce.number().int().positive().default(20_000),

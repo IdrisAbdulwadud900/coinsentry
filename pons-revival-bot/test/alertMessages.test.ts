@@ -414,15 +414,61 @@ describe("dev wallet status rendering", () => {
 });
 
 describe("holder concentration rendering", () => {
-  it("renders a 🐳 icon at low concentration", () => {
+  it("reports concentration even when it is mild, rather than only flagging problems", () => {
     const html = buildRevivalAlertHtml(fakeToken(), fakeSnapshot(), baseline, 30, "robinhood", undefined, undefined, {
       topHolders: [],
       top10Pct: 25,
     });
-    // A mild reading is no longer reported at all: the risk line exists to surface
-    // problems, so its absence is the signal that nothing was flagged.
-    expect(html).not.toContain("top 10 hold 25%");
-    expect(html).not.toContain("⚠️");
+    // Holder concentration is decision information on every coin, not only on bad ones, so
+    // it now always renders when resolved. (It previously appeared only above 50%.)
+    expect(html).toContain("top 10 hold <b>25%</b>");
+    expect(html).toContain("🐳");
+  });
+
+  it("prices each top holder's position so ten small wallets do not read like one whale", () => {
+    // 40% of a $100,000 market cap is $40,000; 0.5% is $500. Same "top 10" percentage,
+    // completely different risk, which is the whole point of the breakdown.
+    const html = buildRevivalAlertHtml(
+      fakeToken(),
+      { ...fakeSnapshot(), marketCapUsd: 100_000 },
+      baseline,
+      30,
+      "robinhood",
+      undefined,
+      undefined,
+      {
+        topHolders: [
+          { address: "0xa", pct: 40 },
+          { address: "0xb", pct: 12 },
+          { address: "0xc", pct: 5 },
+          { address: "0xd", pct: 0.5 },
+        ],
+        top10Pct: 57.5,
+      }
+    );
+    // 40% -> $40,000 and 12% -> $12,000 are both whales; 5% -> $5,000 is a trader-sized
+    // position; 0.5% -> $500 is noise. The largest is named outright.
+    expect(html).toContain("🐳 2 over $10k");
+    expect(html).toContain("🐟 1 over $1k");
+    expect(html).toContain("🦐 1 under $1k");
+    expect(html).toContain("biggest <b>$40,000</b>");
+  });
+
+  it("shows concentration without dollar figures when market cap is unknown", () => {
+    const html = buildRevivalAlertHtml(
+      fakeToken(),
+      { ...fakeSnapshot(), marketCapUsd: null },
+      baseline,
+      30,
+      "robinhood",
+      undefined,
+      undefined,
+      { topHolders: [{ address: "0xa", pct: 40 }], top10Pct: 40 }
+    );
+    // Position sizes come from market cap; without it, inventing dollar amounts would be
+    // worse than omitting them.
+    expect(html).toContain("top 10 hold <b>40%</b>");
+    expect(html).not.toContain("over $10k");
   });
 
   it("renders a ⚠️ icon at 50% or higher concentration", () => {
@@ -431,7 +477,7 @@ describe("holder concentration rendering", () => {
       top10Pct: 55,
     });
     expect(html).toContain("⚠️");
-    expect(html).toContain("top 10 hold 55%");
+    expect(html).toContain("top 10 hold <b>55%</b>");
   });
 
   it("renders a 🚨 icon at 80% or higher concentration", () => {
@@ -439,8 +485,8 @@ describe("holder concentration rendering", () => {
       topHolders: [],
       top10Pct: 85,
     });
-    expect(html).toContain("⚠️"); // severity now reads in the risk line itself
-    expect(html).toContain("top 10 hold 85%");
+    expect(html).toContain("🚨"); // 85% is the severe tier
+    expect(html).toContain("top 10 hold <b>85%</b>");
   });
 
   it("omits the line entirely when holderConcentration is null/undefined", () => {
@@ -540,7 +586,8 @@ describe("early buy concentration rendering", () => {
       undefined,
       { topBuyerPct: 75, top5Pct: 85, windowBlocks: 500 }
     );
-    expect(html).toContain("⚠️"); // severity now reads in the risk line itself
+    // Bundle severity reads from the risk line's own flag, which carries ⚠️.
+    expect(html).toContain("⚠️");
     expect(html).toContain("bundle 85%");
   });
 

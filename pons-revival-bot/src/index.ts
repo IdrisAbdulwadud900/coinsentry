@@ -14,6 +14,7 @@ import { EthPriceClient } from "./data/ethPrice.js";
 import { BlockscoutClient } from "./data/blockscoutClient.js";
 import { SolanaClient } from "./data/solanaClient.js";
 import { JupiterClient } from "./data/jupiterClient.js";
+import { XSearchClient } from "./data/xSearchClient.js";
 import { buildPoolChainConfigs } from "./data/dexPoolDiscovery.js";
 import { Poller, runPollCycle, runFastCycle, type PollerDeps } from "./engine/poller.js";
 import { buildClassifierConfig } from "./engine/classifier.js";
@@ -63,6 +64,7 @@ async function main(): Promise<void> {
   }
   const solanaClient = new SolanaClient(logger.child({ module: "solana" }), config.SOLANA_RPC_URL);
   const jupiterClient = new JupiterClient(logger.child({ module: "jupiter" }));
+  const xSearchClient = new XSearchClient(logger.child({ module: "x-search" }), config.X_BEARER_TOKEN);
   const marketCapAlertTiersUsd = config.MARKET_CAP_ALERT_TIERS_USD.split(",")
     .map((s) => Number(s.trim()))
     .filter((n) => Number.isFinite(n) && n > 0)
@@ -154,6 +156,7 @@ async function main(): Promise<void> {
     blockscoutByChain,
     solanaClient,
     jupiterClient,
+    xSearchClient,
     solanaSpamDevMints: config.SOLANA_SPAM_DEV_MINTS,
     minAlertConviction: config.MIN_ALERT_CONVICTION,
     breakoutVolumeMultiple: config.BREAKOUT_VOLUME_MULTIPLE,
