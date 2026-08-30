@@ -57,11 +57,16 @@ import type { OutcomeRepo, AlertOutcomeRow } from "../data/outcomeRepo.js";
 /** How many prior snapshots (since a token became dead) feed the trailing-median baseline. */
 const BASELINE_SAMPLE_LIMIT = 12;
 
-/** Hard ceiling (USD) on the market cap at which any entry-style alert (revival, momentum,
- * market-cap tier, graduation) may fire — hardcoded per the owner's explicit request: entry
- * alerts are only useful to them at sub-$11k caps. Performance-milestone (10x/100x/1000x)
- * and demotion alerts are exempt, since those track a position *after* a sub-cap entry. */
-const MAX_ALERT_MARKET_CAP_USD = 11_000;
+/**
+ * Hard ceiling (USD) on the market cap at which ANY alert may first fire — the owner's
+ * explicit rule (2026-08-30): the target is coins gaining volume at low caps ($3k-$7k
+ * especially), and anything above $20k is out of scope entirely. One cap for every signal;
+ * this replaced a split scheme ($11k for entries, $250k for breakouts/momentum) because
+ * the split let breakout alerts fire on $50k-$100k coins the owner does not trade.
+ * Performance-milestone (10x/100x/1000x) and demotion alerts remain exempt, since those
+ * track a position *after* a sub-cap entry.
+ */
+const MAX_ALERT_MARKET_CAP_USD = 20_000;
 
 /** Ceiling for the entry-gate bundle cap — the owner's hard rule: never alert on a coin
  * whose top-5 early-buyer ("bundle") concentration exceeds 60%. The observer may
@@ -127,17 +132,6 @@ const MIN_ALERT_BUYS_1H = 5;
  */
 const MIN_ALERT_AGE_MINUTES = 0;
 
-/**
- * Ceiling for signals about *established* coins — breakouts and momentum.
- *
- * These cannot share the $11k launch cap: it exists to catch a coin before it moves, which
- * only makes sense for something just launched. A coin over an hour old that is suddenly
- * being bid has almost always cleared $11k long before the bidding shows up, so the launch
- * cap silently rejects exactly the coins these signals exist to find — observed in
- * production blocking real movers at $17k, $20k, $44k and $99k.
- */
-const MAX_ESTABLISHED_MARKET_CAP_USD = 250_000;
-
 /** Liquidity and 1h-buy floors a link-less coin must clear to qualify without links
  * (see hasStrongTraction). Set well above the $200 discovery floor so this is a genuine
  * traction bar, not a loophole that lets the spam farm back in. */
@@ -155,28 +149,19 @@ const LINKLESS_MIN_BUYS_1H = 12;
 const YOUNG_UNINDEXED_RECHECK_MS = 5 * 60 * 1000;
 
 /**
- * Pre-send quality gate shared by all entry-style alerts. Returns a human-readable reason
- * to skip the alert, or null when the alert may fire. Checks, in order:
- * 1. Market cap must be known and at most MAX_ALERT_MARKET_CAP_USD (hardcoded $11k cap).
- * 2. The token must have DexScreener data with at least one link (website or social) —
- *    the owner's explicit filter against anonymous/spam launches.
- * 3. Honeypot heuristic: a meaningful number of buys with literally zero sells in the
- *    same hour means holders may be unable to sell. Null sell data (unknown) never flags.
+ * Pre-send quality gate shared by ALL alerts, breakouts and momentum included. Returns a
+ * human-readable reason to skip the alert, or null when the alert may fire. Checks:
+ * 1. Market cap must be known and at most MAX_ALERT_MARKET_CAP_USD ($20k) — one universal
+ *    ceiling, per the owner: lowcaps gaining volume are the whole target, and anything
+ *    above $20k is out of scope no matter which signal spotted it.
+ * 2. Liquidity/buys floors, honeypot heuristic, and the links-or-traction rule below.
  */
 function entryAlertBlockReason(
   marketCapUsd: number | null,
   snapshot: Pick<MarketSnapshot, "websiteUrl" | "socials" | "buys1h" | "sells1h" | "liquidityUsd"> | null | undefined,
-  ageMinutes: number | null,
-  /**
-   * Breakouts price differently from launches. The $11k cap exists to catch a coin before
-   * it moves, which only makes sense for something just launched; a coin that is over an
-   * hour old and suddenly being bid has usually cleared $11k long before the bidding shows
-   * up, so applying the launch cap here would silence the signal the owner actually asked
-   * for. A ceiling still applies, just a realistic one — above it a further multiple is
-   * not a plausible memecoin move.
-   */
-  maxMarketCapUsd: number = MAX_ALERT_MARKET_CAP_USD
+  ageMinutes: number | null
 ): string | null {
+  const maxMarketCapUsd = MAX_ALERT_MARKET_CAP_USD;
   if (ageMinutes != null && ageMinutes < MIN_ALERT_AGE_MINUTES) {
     return `only ${Math.round(ageMinutes)}m old — below the ${MIN_ALERT_AGE_MINUTES}m minimum age`;
   }
@@ -1348,8 +1333,7 @@ async function handleBreakoutCandidate(
     entryAlertBlockReason(
       resolveMarketCapUsd(current),
       current,
-      alertAgeMinutes(token, now),
-      MAX_ESTABLISHED_MARKET_CAP_USD
+      alertAgeMinutes(token, now)
     ) ??
     (await convictionBlockReason(deps, token, now, true));
   if (gateReason) {
@@ -1940,8 +1924,7 @@ export async function runMomentumFastSweep(deps: PollerDeps, now: number): Promi
       entryAlertBlockReason(
         current.marketCapUsd,
         current,
-        alertAgeMinutes(token, now),
-        MAX_ESTABLISHED_MARKET_CAP_USD
+        alertAgeMinutes(token, now)
       ) ?? (await convictionBlockReason(deps, token, now));
     if (gateReason) {
       recordGateBlock(deps, token, "momentum", gateReason);

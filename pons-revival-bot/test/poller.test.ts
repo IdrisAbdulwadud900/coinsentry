@@ -757,14 +757,12 @@ describe("runMomentumFastSweep", () => {
     expect(html).not.toContain("dev hold"); // a sold dev is not a risk, so nothing is printed
   });
 
-  // $20k used to be blocked here by the $11k launch cap. That cap is for catching a coin
-  // before it moves, which cannot apply to a signal that now describes an established coin
-  // being suddenly bid — in production it was rejecting real movers at $17k, $20k, $44k
-  // and $99k. Momentum takes the established ceiling instead, so $20k passes and only a
-  // genuinely implausible market cap is refused.
-  it("alerts an established coin above the $11k launch cap, but still refuses one above the established ceiling", async () => {
+  // One universal $20k ceiling, per the owner (2026-08-30): the target is lowcaps gaining
+  // volume — $3k-$7k especially — and anything above $20k is out of scope for every
+  // signal. This replaced a split scheme ($11k entries / $250k breakouts+momentum).
+  it("refuses any alert above the universal $20k market-cap ceiling", async () => {
     const now = Date.now();
-    const lookupBatch = vi.fn(async () => [fakePair("0xAAA", 20, 5000, 900_000)]);
+    const lookupBatch = vi.fn(async () => [fakePair("0xAAA", 20, 5000, 21_000)]);
     const sendAlert = vi.fn(async () => {});
     const { deps, tokenRepo } = baseDeps(db, {
       dex: { lookupBatch } as unknown as DexScreenerClient,
@@ -1477,14 +1475,12 @@ describe("breakout detection (any-age surges)", () => {
     expect(sendAlert).toHaveBeenCalledTimes(1);
   });
 
-  // Breakouts deliberately do NOT use the $11k launch cap. That cap exists to catch a coin
-  // before it moves, which only applies to something just launched; a coin over an hour old
-  // that is suddenly being bid has almost always cleared $11k before the bidding appears,
-  // so enforcing it here would mute the signal entirely. A higher ceiling still applies.
-  it("alerts on a breakout above the $11k launch cap but still refuses one above the breakout ceiling", async () => {
+  // The $20k ceiling is universal — a breakout is refused above it exactly like every
+  // other signal, per the owner's rule that anything above $20k is out of scope.
+  it("refuses a breakout above the universal $20k market-cap ceiling", async () => {
     const now = Date.now();
     const sendAlert = vi.fn(async () => {});
-    const expensive = { ...surgingPair(), marketCap: 480_000 };
+    const expensive = { ...surgingPair(), marketCap: 22_000 };
     const { deps, tokenRepo } = baseDeps(db, {
       dex: { lookupBatch: vi.fn(async () => [expensive]) } as unknown as DexScreenerClient,
       notifier: { sendAlert } as unknown as Notifier,

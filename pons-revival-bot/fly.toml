@@ -21,7 +21,9 @@ primary_region = "iad"
 
   FAST_DISCOVERY_INTERVAL_SECONDS = "20"
   UNGRADUATED_FAST_WINDOW_HOURS = "6"
-  MARKET_CAP_ALERT_TIERS_USD = "3000,4000,5000,6000,10000"
+  # Rungs end just under the universal $20k ceiling: a coin crossing 15k is close to
+  # leaving alertable range, which is itself worth knowing.
+  MARKET_CAP_ALERT_TIERS_USD = "3000,4000,5000,6000,10000,15000"
   # Deliver only the highest-conviction profile: Robinhood coins alerted within 5 minutes
   # of launch, measured at 86% win / 3% dump for tier alerts and 73% for momentum, vs
   # 31-44% for everything older. Set to "low" to restore full coverage.
