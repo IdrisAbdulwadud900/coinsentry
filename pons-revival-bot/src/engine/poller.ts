@@ -1,4 +1,3 @@
-import v8 from "node:v8";
 import type { Logger } from "pino";
 import type { TokenRepo } from "../data/tokenRepo.js";
 import type { SnapshotRepo } from "../data/snapshotRepo.js";
@@ -859,6 +858,9 @@ async function checkAndSendMarketCapTierAlert(
 
   tokenRepo.setGraduationAlertTier(token.address, newTierIndex);
   maybeCaptureFirstAlertBaseline(deps, token, marketCapUsd, now);
+  // Tier crossings are the most common alert, so they carry the X-mentions line too —
+  // resolved only here, at send time, never during the scan.
+  const tierXMentions = await resolveXMentions(deps, token);
   const html = buildMarketCapAlertHtml(
     token,
     crossedTiers,
@@ -871,7 +873,8 @@ async function checkAndSendMarketCapTierAlert(
     holderConcentration,
     earlyBuyConcentration,
     solanaSafety,
-    rateConviction(token.chain, alertAgeMinutes(token, now), solanaSafety)
+    rateConviction(token.chain, alertAgeMinutes(token, now), solanaSafety),
+    tierXMentions
   );
   if (dryRunAlerts) {
     logger.info({ address: token.address, symbol: token.symbol, html }, "[DRY RUN] Would send market-cap tier alert");
@@ -1451,7 +1454,10 @@ async function runUnindexedSweep(deps: PollerDeps, now: number): Promise<void> {
   // previously these sat invisible for up to 24h and their early run was missed entirely.
   const youngFirstSeenCutoff = now - deps.ungraduatedFastWindowHours * 60 * 60 * 1000;
   const youngCheckedCutoff = now - YOUNG_UNINDEXED_RECHECK_MS;
-  const due = tokenRepo.listUnindexedDueForRecheck(cutoff, youngFirstSeenCutoff, youngCheckedCutoff);
+  // 600 per cycle: 20 DexScreener batches, well inside the request budget, and a bounded
+  // allocation. See the limit parameter's comment for the crash the old unbounded read
+  // caused — this sweep, not the market scan, was what kept exhausting the heap.
+  const due = tokenRepo.listUnindexedDueForRecheck(cutoff, youngFirstSeenCutoff, youngCheckedCutoff, 600, deps.ponsLaunchpadOnly);
   if (due.length === 0) return;
 
   const pairsByToken = await lookupPairsAcrossChains(deps, due);
@@ -2077,10 +2083,14 @@ export async function runFastCycle(deps: PollerDeps): Promise<void> {
   }
 
   // Tier coverage for DEX-launched (non-Pons) tokens, which no other sweep watches.
-  try {
-    await runNonPonsFastSweep(deps, now);
-  } catch (err) {
-    logger.error({ err: String(err) }, "Non-Pons fast sweep step failed unexpectedly, continuing");
+  // Skipped entirely in Pons-only mode: this sweep reads non-Pons tokens by definition,
+  // so leaving it running would keep alerting on exactly the coins the owner scoped out.
+  if (!deps.ponsLaunchpadOnly) {
+    try {
+      await runNonPonsFastSweep(deps, now);
+    } catch (err) {
+      logger.error({ err: String(err) }, "Non-Pons fast sweep step failed unexpectedly, continuing");
+    }
   }
 
   try {
@@ -2096,29 +2106,6 @@ export async function runFastCycle(deps: PollerDeps): Promise<void> {
  * crash on the strength of plausible-looking suspects, and it kept dying at the same point,
  * so this logs what is actually resident at each step rather than inviting a fourth guess.
  */
-/**
- * Writes one heap snapshot while the process still has room to serialise it.
- *
- * Taking it at the heap limit does not work — V8 needs memory to write the file and every
- * dump produced that way was 0 bytes. The first attempt at 300MB, checked every 50 coins,
- * never fired either: the process goes from under the threshold to dead between checks,
- * which says the failure is one large allocation rather than a slow drip. 200MB checked
- * every 10 coins is set to land in front of it. Fires once per process.
- */
-let heapDumpWritten = false;
-function maybeDumpHeap(deps: PollerDeps, processed: number): void {
-  if (heapDumpWritten) return;
-  const heapUsedMB = process.memoryUsage().heapUsed / 1048576;
-  if (heapUsedMB < 200) return;
-  heapDumpWritten = true;
-  try {
-    const file = v8.writeHeapSnapshot("/data/leak.heapsnapshot");
-    deps.logger.warn({ file, heapUsedMB: Math.round(heapUsedMB), processed }, "heap dump written");
-  } catch (err) {
-    deps.logger.error({ err: String(err) }, "heap dump failed");
-  }
-}
-
 function logHeap(deps: PollerDeps, step: string, extra: Record<string, unknown> = {}): void {
   const m = process.memoryUsage();
   deps.logger.info(
@@ -2239,8 +2226,6 @@ export async function runPollCycle(deps: PollerDeps): Promise<void> {
           // snapshot is still written below, so baselines stay continuous and a coin that
           // starts trading is picked up on the very next pass.
           scanned += 1;
-          if (scanned % 10 === 0) maybeDumpHeap(deps, scanned);
-
           const hasLiveTrade = (current.buys1h ?? 0) > 0 || (current.volume1h ?? 0) > 0;
           // Recorded on the row so the next cycle's scan can prioritise this coin cheaply.
           if (hasLiveTrade) tokenRepo.markTraded(token.address, now);

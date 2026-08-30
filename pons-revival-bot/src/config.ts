@@ -14,13 +14,12 @@ const ConfigSchema = z.object({
   // string "false" would switch the flag ON and quietly defeat the whole point of it.
   POLLING_ENABLED: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
 
-  // The fast poller exists to catch a launch within seconds of it happening. That is the
-  // new-pair strategy, which has been retired: nothing under MIN_ALERT_AGE_MINUTES can
-  // alert now, so racing to see a launch buys nothing. It is also the one loop that ran
-  // every 20s doing full discovery and pool scans without instrumentation, which makes it
-  // the prime remaining suspect for the ~470MB of live objects that still kill this process
-  // roughly every eight minutes. Off by default: strategically pointless and a leak risk.
-  FAST_POLLING_ENABLED: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
+  // The fast poller catches a launch within seconds of it happening — the measured
+  // best-performing alert bucket is coins under 5 minutes old, which only this loop can
+  // reach. It was off while new pairs were out of scope and while the unindexed sweep it
+  // shares could materialise 400k rows in one read (the crash the whole hunt was chasing);
+  // that read is now hard-capped, and new pairs are targets again.
+  FAST_POLLING_ENABLED: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
 
   DEAD_MIN_AGE_HOURS: z.coerce.number().positive().default(24),
   DEAD_VOLUME_24H_USD: z.coerce.number().nonnegative().default(500),

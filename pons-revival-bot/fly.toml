@@ -17,7 +17,14 @@ primary_region = "iad"
   # errors are all warn or above, so nothing operationally useful is lost.
   LOG_LEVEL = "info"
   DRY_RUN_ALERTS = "false"
-  POLL_INTERVAL_SECONDS = "900"
+  # 900 was sized for 458k tokens per cycle. Pons-only tracks ~24k with a hot-set that
+  # fits in one batch, so 300 triples how often a surging coin is re-read.
+  POLL_INTERVAL_SECONDS = "300"
+  # Back on: this is what catches a brand-new Pons pair within ~20s of launch — the
+  # measured 86%-win bucket is alerts under 5 minutes old, which a 5-minute slow cycle
+  # cannot deliver alone. It was disabled while new pairs were out of scope and while its
+  # unindexed sweep could load 400k rows in one read; that read is now capped at 600.
+  FAST_POLLING_ENABLED = "true"
 
   FAST_DISCOVERY_INTERVAL_SECONDS = "20"
   UNGRADUATED_FAST_WINDOW_HOURS = "6"

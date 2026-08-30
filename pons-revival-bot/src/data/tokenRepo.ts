@@ -163,19 +163,40 @@ export class TokenRepo {
    * checked within the much shorter young-token interval. The fast lane exists so a brand-new
    * pair that gets indexed by DexScreener minutes after launch is promoted to 'active' while
    * its momentum window is still open, instead of waiting up to UNINDEXED_RECHECK_HOURS. */
-  listUnindexedDueForRecheck(cutoffTs: number, youngFirstSeenCutoff: number, youngCheckedCutoff: number): TokenRow[] {
+  listUnindexedDueForRecheck(
+    cutoffTs: number,
+    youngFirstSeenCutoff: number,
+    youngCheckedCutoff: number,
+    /**
+     * Hard row cap. Unbounded, this query WAS the crash that kept killing the bot: with
+     * 400,698 unindexed tokens, any downtime made the whole backlog due at once and one
+     * .all() materialised ~400MB of rows — the exact single-allocation signature in the
+     * GC logs (Mark-Compact 511.4 -> 511.2MB, nothing reclaimable), and invisible to every
+     * market-scan-sized knob because this sweep never read any of them. Young tokens sort
+     * first so a fresh pair's fast lane still works, then oldest-checked round-robins.
+     */
+    limit: number,
+    /** In Pons-only mode the 400k DEX-discovered unindexed rows are skipped outright:
+     * left in, they would consume the entire per-cycle budget for ~55 hours per pass
+     * while every Pons coin waited behind them. */
+    ponsOnly = false
+  ): TokenRow[] {
+    const ponsFilter = ponsOnly ? " AND factory_address IS NOT NULL" : "";
     return this.db
       .prepare<
-        [number, number, number],
+        [number, number, number, number, number],
         TokenRow
       >(
-        `SELECT * FROM tokens WHERE status = 'unindexed' AND (
+        `SELECT * FROM tokens WHERE status = 'unindexed'${ponsFilter} AND (
            last_checked_at IS NULL
            OR last_checked_at < ?
            OR (first_seen_at >= ? AND last_checked_at < ?)
-         )`
+         )
+         ORDER BY (CASE WHEN first_seen_at >= ? THEN 0 ELSE 1 END) ASC,
+                  COALESCE(last_checked_at, 0) ASC
+         LIMIT ?`
       )
-      .all(cutoffTs, youngFirstSeenCutoff, youngCheckedCutoff);
+      .all(cutoffTs, youngFirstSeenCutoff, youngCheckedCutoff, youngFirstSeenCutoff, limit);
   }
 
   /** Count of tokens already attributed to a deployer, used to detect mass-spam launchers. */
