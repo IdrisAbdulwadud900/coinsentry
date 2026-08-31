@@ -40,6 +40,16 @@ export class SnapshotRepo {
       .get(address.toLowerCase());
   }
 
+  /** Folds the WAL back into the main database and truncates it to zero.
+   *
+   * SQLite's automatic checkpointing is passive: it needs a moment with no active reader
+   * or writer, which a continuously-polling cycle rarely provides. Left alone the WAL grew
+   * to 363MB against a 641MB database and filled the 1GB volume, at which point the file
+   * could no longer be opened at all. */
+  checkpointWal(): void {
+    this.db.pragma("wal_checkpoint(TRUNCATE)");
+  }
+
   pruneOlderThan(cutoffTs: number): number {
     const result = this.db.prepare("DELETE FROM snapshots WHERE ts < ?").run(cutoffTs);
     return result.changes;

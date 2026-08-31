@@ -1444,7 +1444,7 @@ async function handleAlertedToken(deps: PollerDeps, token: TokenRow, current: Re
  * less often per-token than the main lookup (throttled via each token's own
  * last_checked_at), so it doesn't add meaningful load to every cycle.
  */
-async function runUnindexedSweep(deps: PollerDeps, now: number): Promise<void> {
+async function runUnindexedSweep(deps: PollerDeps, now: number, youngOnly = false): Promise<void> {
   const { tokenRepo, dex, dexScreenerChainId, logger, unindexedRecheckHours, discoveryMinLiquidityUsd } = deps;
 
   const cutoff = now - unindexedRecheckHours * 60 * 60 * 1000;
@@ -1457,7 +1457,18 @@ async function runUnindexedSweep(deps: PollerDeps, now: number): Promise<void> {
   // 600 per cycle: 20 DexScreener batches, well inside the request budget, and a bounded
   // allocation. See the limit parameter's comment for the crash the old unbounded read
   // caused — this sweep, not the market scan, was what kept exhausting the heap.
-  const due = tokenRepo.listUnindexedDueForRecheck(cutoff, youngFirstSeenCutoff, youngCheckedCutoff, 600, deps.ponsLaunchpadOnly);
+  // Budgets differ by caller. The slow cycle works the whole backlog at 600 rows; the
+  // fast cycle takes only the young lane at 90 (three DexScreener batches) — it used to
+  // run the full 600 every 20 seconds, which alone stretched the "fast" cycle to 4-12
+  // minutes and starved the launch-catching it exists for.
+  const due = tokenRepo.listUnindexedDueForRecheck(
+    cutoff,
+    youngFirstSeenCutoff,
+    youngCheckedCutoff,
+    youngOnly ? 90 : 600,
+    deps.ponsLaunchpadOnly,
+    youngOnly
+  );
   if (due.length === 0) return;
 
   const pairsByToken = await lookupPairsAcrossChains(deps, due);
@@ -1501,7 +1512,9 @@ export async function runGraduationSweep(deps: PollerDeps, now: number): Promise
     dex,
   } = deps;
 
-  const due = tokenRepo.listUngraduatedTrackable();
+  // 1,500 = five multicall batches; see the query's comment for the 20-minute cycle this
+  // capped.
+  const due = tokenRepo.listUngraduatedTrackable(1_500);
   if (due.length === 0) return;
 
   const byAddress = new Map(due.map((t) => [t.address, t]));
@@ -2071,7 +2084,7 @@ export async function runFastCycle(deps: PollerDeps): Promise<void> {
   }
 
   try {
-    await runUnindexedSweep(deps, now);
+    await runUnindexedSweep(deps, now, true);
   } catch (err) {
     logger.error({ err: String(err) }, "Unindexed sweep step failed unexpectedly, continuing");
   }
@@ -2115,6 +2128,27 @@ function logHeap(deps: PollerDeps, step: string, extra: Record<string, unknown> 
 }
 
 export async function runPollCycle(deps: PollerDeps): Promise<void> {
+  // Housekeeping runs FIRST, before anything that can fail or overrun.
+  //
+  // It used to be the last statement in this function, which meant it only ran if every
+  // sweep before it finished. They stopped finishing (a 20-minute graduation sweep, then
+  // repeated crashes), so retention silently stopped being enforced: 2,709,738 of
+  // 2,721,471 snapshots were past the 3-day cutoff, the database reached 641MB with a
+  // 363MB WAL beside it, and the volume filled — after which SQLite could not even open
+  // ("SQLITE_IOERR_SHMSIZE") and the machine hit its restart limit. Cleanup that only
+  // happens on the happy path is cleanup that stops happening exactly when it is needed.
+  try {
+    const retentionCutoff = Date.now() - deps.snapshotRetentionDays * 24 * 60 * 60 * 1000;
+    const pruned = deps.snapshotRepo.pruneOlderThan(retentionCutoff);
+    // Checkpoint every cycle: WAL growth is the other half of the same outage. Passive
+    // checkpointing needs a quiet moment that a continuously-writing cycle never gives it,
+    // so the WAL grew unbounded to 363MB while the main file was only 641MB.
+    deps.snapshotRepo.checkpointWal();
+    if (pruned > 0) deps.logger.info({ pruned }, "Pruned snapshots past retention");
+  } catch (err) {
+    deps.logger.error({ err: String(err) }, "Housekeeping failed, continuing");
+  }
+
   const { tokenRepo, snapshotRepo, dex, dexScreenerChainId, logger, snapshotRetentionDays } = deps;
   const now = Date.now();
 
@@ -2310,11 +2344,6 @@ export async function runPollCycle(deps: PollerDeps): Promise<void> {
     logger.error({ err: String(err) }, "Observer sweep step failed unexpectedly, continuing");
   }
 
-  const cutoff = now - snapshotRetentionDays * 24 * 60 * 60 * 1000;
-  const pruned = snapshotRepo.pruneOlderThan(cutoff);
-  if (pruned > 0) {
-    logger.debug({ pruned }, "Pruned old snapshots");
-  }
 }
 
 export interface PollerOptions {

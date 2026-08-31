@@ -179,15 +179,19 @@ export class TokenRepo {
     /** In Pons-only mode the 400k DEX-discovered unindexed rows are skipped outright:
      * left in, they would consume the entire per-cycle budget for ~55 hours per pass
      * while every Pons coin waited behind them. */
-    ponsOnly = false
+    ponsOnly = false,
+    /** Restrict to the young fast lane entirely — used by the fast cycle, whose whole
+     * purpose is promoting brand-new pairs the moment DexScreener indexes them. */
+    youngOnly = false
   ): TokenRow[] {
     const ponsFilter = ponsOnly ? " AND factory_address IS NOT NULL" : "";
+    const youngFilter = youngOnly ? " AND first_seen_at >= ?" : "";
     return this.db
       .prepare<
-        [number, number, number, number, number],
+        number[],
         TokenRow
       >(
-        `SELECT * FROM tokens WHERE status = 'unindexed'${ponsFilter} AND (
+        `SELECT * FROM tokens WHERE status = 'unindexed'${ponsFilter}${youngFilter} AND (
            last_checked_at IS NULL
            OR last_checked_at < ?
            OR (first_seen_at >= ? AND last_checked_at < ?)
@@ -196,7 +200,14 @@ export class TokenRepo {
                   COALESCE(last_checked_at, 0) ASC
          LIMIT ?`
       )
-      .all(cutoffTs, youngFirstSeenCutoff, youngCheckedCutoff, youngFirstSeenCutoff, limit);
+      .all(
+        ...(youngOnly ? [youngFirstSeenCutoff] : []),
+        cutoffTs,
+        youngFirstSeenCutoff,
+        youngCheckedCutoff,
+        youngFirstSeenCutoff,
+        limit
+      );
   }
 
   /** Count of tokens already attributed to a deployer, used to detect mass-spam launchers. */
@@ -333,13 +344,24 @@ export class TokenRepo {
   /** Trackable (non-'unindexed') tokens that haven't graduated yet and have a known
    * origin factory, i.e. candidates for the graduation-status recheck sweep. Once
    * graduated=1 a token is never queried again, since graduation is permanent. */
-  listUngraduatedTrackable(): TokenRow[] {
+  listUngraduatedTrackable(limit: number): TokenRow[] {
+    // Bounded and round-robin (least-recently-checked first, via graduation_checked_at,
+    // which the sweep stamps on every token it reads). Unbounded, this walked ~20k
+    // ungraduated Pons coins through ~67 multicall batches against the public RPC every
+    // cycle — about 20 minutes — which quietly turned the 5-minute poll interval into a
+    // 25-minute one. Graduation is a one-time threshold crossing and the fast sweep
+    // already covers young tokens where minutes matter, so a full pass spread across ~13
+    // cycles loses nothing.
     return this.db
       .prepare<
-        [],
+        [number],
         TokenRow
-      >("SELECT * FROM tokens WHERE graduated = 0 AND status != 'unindexed' AND factory_address IS NOT NULL")
-      .all();
+      >(
+        `SELECT * FROM tokens WHERE graduated = 0 AND status != 'unindexed' AND factory_address IS NOT NULL
+         ORDER BY COALESCE(graduation_checked_at, 0) ASC
+         LIMIT ?`
+      )
+      .all(limit);
   }
 
   /** Like listUngraduatedTrackable, but for the fast sweep: INCLUDES 'unindexed' tokens

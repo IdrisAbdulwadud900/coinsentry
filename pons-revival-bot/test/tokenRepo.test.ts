@@ -157,7 +157,7 @@ describe("TokenRepo graduation tracking", () => {
   });
 
   it("listUngraduatedTrackable excludes unindexed, no-factory, and already-graduated tokens", () => {
-    const due = repo.listUngraduatedTrackable();
+    const due = repo.listUngraduatedTrackable(100);
     expect(due.map((t) => t.address).sort()).toEqual(["0xaaa", "0xbbb"]);
   });
 
@@ -170,7 +170,7 @@ describe("TokenRepo graduation tracking", () => {
     expect(token?.graduation_threshold_wei).toBe("4200000000000000000");
     expect(token?.graduation_checked_at).toBe(now);
 
-    const due = repo.listUngraduatedTrackable();
+    const due = repo.listUngraduatedTrackable(100);
     expect(due.map((t) => t.address)).not.toContain("0xaaa");
   });
 
@@ -182,7 +182,7 @@ describe("TokenRepo graduation tracking", () => {
     expect(token?.graduation_paired_wei).toBe("1000000000000000000");
     expect(token?.graduation_threshold_wei).toBe("4200000000000000000");
 
-    const due = repo.listUngraduatedTrackable();
+    const due = repo.listUngraduatedTrackable(100);
     expect(due.map((t) => t.address)).toContain("0xaaa");
   });
 
