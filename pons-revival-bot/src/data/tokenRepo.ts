@@ -153,6 +153,45 @@ export class TokenRepo {
    * would fsync once per token and dominate the cycle's runtime). */
   /** Stamps when a coin was last seen trading, so the scan can prioritise it without
    * joining the snapshots table on every cycle. */
+  /**
+   * Tokens whose pool is in `poolAddresses` — the bridge from a swap log back to a coin.
+   *
+   * Chunked because SQLite caps a statement at 999 bound parameters, and a busy minute of
+   * chain yields a few hundred pools.
+   */
+  listByPairAddresses(poolAddresses: string[]): TokenRow[] {
+    const out: TokenRow[] = [];
+    for (let i = 0; i < poolAddresses.length; i += 400) {
+      const batch = poolAddresses.slice(i, i + 400);
+      const placeholders = batch.map(() => "?").join(", ");
+      out.push(
+        ...this.db
+          .prepare<string[], TokenRow>(
+            `SELECT * FROM tokens WHERE pair_address COLLATE NOCASE IN (${placeholders})`
+          )
+          .all(...batch)
+      );
+    }
+    return out;
+  }
+
+  /** Sends an unindexed token to the front of the recheck queue (which orders by
+   * oldest-checked), so a coin seen trading is resolved on the next pass rather than
+   * whenever its turn happens to come. */
+  /** Records the pool a coin trades in, learned from a swap log. Only fills a missing
+   * value — an existing pair_address came from DexScreener and is authoritative. */
+  setPairAddressIfMissing(address: string, pairAddress: string): void {
+    this.db
+      .prepare("UPDATE tokens SET pair_address = ? WHERE address = ? AND (pair_address IS NULL OR pair_address = '')")
+      .run(pairAddress, normalizeAddress(address));
+  }
+
+  markUnindexedForImmediateRecheck(address: string): void {
+    this.db
+      .prepare("UPDATE tokens SET last_checked_at = 0 WHERE address = ? AND status = 'unindexed'")
+      .run(normalizeAddress(address));
+  }
+
   markTraded(address: string, now: number): void {
     this.db.prepare("UPDATE tokens SET last_traded_at = ? WHERE address = ?").run(now, normalizeAddress(address));
   }

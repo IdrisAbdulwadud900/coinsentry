@@ -216,6 +216,9 @@ function migrate(db: Database.Database): void {
   // When the coin was last seen actually trading. Lets the market scan put live coins at
   // the front without correlating a subquery against the multi-million-row snapshots table
   // for every token on every cycle, which was heavy enough to kill the process outright.
+  // Maps a swap log's pool back to its token (see listByPairAddresses). Without this the
+  // lookup is a full scan of the token table on every swap-activity pass.
+  db.exec("CREATE INDEX IF NOT EXISTS idx_tokens_pair_address ON tokens(pair_address)");
   if (!columnNames.has("last_traded_at")) {
     db.exec("ALTER TABLE tokens ADD COLUMN last_traded_at INTEGER NOT NULL DEFAULT 0");
     db.exec("CREATE INDEX IF NOT EXISTS idx_tokens_last_traded_at ON tokens(last_traded_at)");

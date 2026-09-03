@@ -106,6 +106,10 @@ const ConfigSchema = z.object({
   // Regex-constrained because this value is interpolated into a SQL fragment (the filter
   // varies the statement shape, so it cannot be a bound parameter). Restricting it to a
   // 0x-prefixed 20-byte hex address makes anything injectable fail to load at startup.
+  // Chunks of ~600 blocks the swap-activity scan covers per fast cycle. The fast cycle runs
+  // every 20s and 600 blocks is ~60s of chain, so 4 chunks (~4 minutes of chain) keeps the
+  // scan comfortably ahead of real time and absorbs a backlog after any downtime.
+  SWAP_SCAN_MAX_CHUNKS_PER_CYCLE: z.coerce.number().int().positive().default(4),
   PONS_FACTORY_FILTER: z
     .string()
     .regex(/^(0x[a-fA-F0-9]{40})?$/, "PONS_FACTORY_FILTER must be a 0x address or empty")

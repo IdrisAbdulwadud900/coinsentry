@@ -6,6 +6,7 @@ import type { DiscoveryStateRepo } from "../data/discoveryStateRepo.js";
 import type { ChainClient } from "../data/chainClient.js";
 import {
   readGraduationStatuses,
+  readPoolTokens,
   readPoolMarketCaps,
   readTokenBalance,
   readTotalSupply,
@@ -50,6 +51,7 @@ import { runDexPoolDiscovery, type ChainPoolConfig } from "../data/dexPoolDiscov
 import { runSolanaDiscovery } from "../data/solanaDiscovery.js";
 import type { JupiterClient } from "../data/jupiterClient.js";
 import type { XSearchClient, XMention } from "../data/xSearchClient.js";
+import { scanRecentSwaps, SWAP_SCAN_CHUNK_BLOCKS } from "../data/swapScanner.js";
 import type { DexPair } from "../types/dexscreener.js";
 import type { OutcomeRepo, AlertOutcomeRow } from "../data/outcomeRepo.js";
 
@@ -773,6 +775,13 @@ export interface PollerDeps {
   ponsLaunchpadOnly: boolean;
   /** When set, only this Pons factory's coins are scanned (v2 in production). */
   ponsFactoryFilter?: string | null;
+  /** RPC used by the swap-activity scan. */
+  robinhoodRpcUrl: string;
+  /** Chunks of ~600 blocks the swap scan may cover per fast cycle. */
+  swapScanMaxChunksPerCycle: number;
+  /** Pools already resolved to nothing we track, so they are not re-resolved every cycle.
+   * Process-lifetime only; losing it on restart just repeats cheap work once. */
+  resolvedPoolCache: Set<string>;
   /** Per-chain pool-factory scanning setup (Robinhood, plus BSC/Ethereum when configured). */
   poolChainConfigs: ChainPoolConfig[];
   /** Blockscout-compatible holder/metadata APIs, keyed by chain. Robinhood and Ethereum
@@ -2013,6 +2022,86 @@ export async function runMomentumFastSweep(deps: PollerDeps, now: number): Promi
  * this concurrently with runPollCycle is a safe, accepted race — at worst slightly
  * redundant work.
  */
+/**
+ * Finds coins being bought by reading swap logs, instead of polling coins to ask.
+ *
+ * Polling is the wrong shape for this problem: with ~190,000 coins and a few thousand
+ * lookups per cycle, a coin that starts running is not looked at for hours, which is how
+ * 5x/10x/20x moves were being missed outright. Every buy, though, writes a swap log. One
+ * getLogs per ~600 blocks surfaces every pool traded in that minute (measured: 247 distinct
+ * pools, 413ms) no matter how many dormant coins exist — so cost tracks chain activity
+ * rather than table size.
+ *
+ * Anything found trading is stamped so the market scan puts it first, and an 'unindexed'
+ * coin — which cannot alert at all — is promoted to the front of the recheck queue instead
+ * of waiting hours for its turn.
+ */
+async function runSwapActivityScan(deps: PollerDeps, now: number): Promise<void> {
+  const { tokenRepo, discoveryStateRepo, logger } = deps;
+  const cursorKey = "robinhood:swap-activity";
+
+  let fromBlock = discoveryStateRepo.getLastScannedBlock(cursorKey);
+  if (fromBlock == null) {
+    // First run: start one chunk back rather than at genesis — this scan is about what is
+    // happening now, and history is the backfill's job.
+    const head = await deps.chainClient.getBlockNumber();
+    fromBlock = head > BigInt(SWAP_SCAN_CHUNK_BLOCKS) ? head - BigInt(SWAP_SCAN_CHUNK_BLOCKS) : 0n;
+  }
+
+  const { pools, reachedBlock } = await scanRecentSwaps(
+    deps.robinhoodRpcUrl,
+    fromBlock,
+    deps.swapScanMaxChunksPerCycle,
+    logger
+  );
+  if (reachedBlock >= fromBlock) discoveryStateRepo.setLastScannedBlock(cursorKey, reachedBlock + 1n);
+  if (pools.size === 0) return;
+
+  const traded = tokenRepo.listByPairAddresses([...pools]);
+  const knownPools = new Set(traded.map((t) => (t.pair_address ?? "").toLowerCase()));
+
+  // Pools that traded but match no token we track. Most belong to coins outside the
+  // launchpad, but some are launchpad coins whose pool was never recorded — 129,553 have
+  // no pair_address stored — and those are invisible here until the mapping is learned.
+  // Resolving them on-chain and writing the pool back makes every future scan match
+  // instantly. Pools that resolve to nothing we track are remembered so the work is done
+  // once per pool rather than every cycle.
+  const unknown = [...pools].filter((p) => !knownPools.has(p) && !deps.resolvedPoolCache.has(p));
+  if (unknown.length > 0) {
+    const resolved = await readPoolTokens(deps.chainClient, unknown.slice(0, 150), 50, logger);
+    for (const [pool, { token0, token1 }] of resolved) {
+      let learned = false;
+      for (const candidate of [token0, token1]) {
+        const token = tokenRepo.findByAddress(candidate);
+        if (!token || !token.factory_address) continue;
+        tokenRepo.setPairAddressIfMissing(token.address, pool);
+        tokenRepo.markTraded(token.address, now);
+        if (token.status === "unindexed") tokenRepo.markUnindexedForImmediateRecheck(token.address);
+        learned = true;
+      }
+      if (!learned) deps.resolvedPoolCache.add(pool);
+    }
+  }
+
+  let promoted = 0;
+  for (const token of traded) {
+    tokenRepo.markTraded(token.address, now);
+    if (token.status === "unindexed") {
+      // Clearing last_checked_at puts it at the head of the unindexed sweep's
+      // oldest-checked ordering, so the very next pass resolves it instead of reaching it
+      // hours later. Promotion still requires real market data — this only reorders.
+      tokenRepo.markUnindexedForImmediateRecheck(token.address);
+      promoted += 1;
+    }
+  }
+  if (traded.length > 0) {
+    logger.info(
+      { poolsTraded: pools.size, matchedTokens: traded.length, queuedForRecheck: promoted },
+      "Swap activity scan complete"
+    );
+  }
+}
+
 export async function runFastCycle(deps: PollerDeps): Promise<void> {
   const { tokenRepo, dex, dexScreenerChainId, logger } = deps;
   const now = Date.now();
@@ -2036,6 +2125,12 @@ export async function runFastCycle(deps: PollerDeps): Promise<void> {
     );
   } catch (err) {
     logger.error({ err: String(err) }, "Fast-cycle discovery step failed, continuing");
+  }
+
+  try {
+    await runSwapActivityScan(deps, now);
+  } catch (err) {
+    logger.error({ err: String(err) }, "Swap activity scan failed, continuing");
   }
 
   // Runs here as well as in the slow cycle: the young-token fast lane inside this sweep

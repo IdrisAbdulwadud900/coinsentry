@@ -468,3 +468,38 @@ describe("single-factory (Pons v2) scanning", () => {
     expect(both).toEqual(["NEW", "OLD"]);
   });
 });
+
+describe("swap-activity bridge", () => {
+  // Swap logs identify a pool; this maps that pool back to the coin so the bot can act on
+  // it. Without it, knowing a pool traded is useless.
+  it("finds tokens by their pool address, case-insensitively", () => {
+    const db = openDatabase(":memory:");
+    const repo = new TokenRepo(db);
+    const now = Date.now();
+    const POOL = "0xC246b088646869D57BBE483968B05D6dCdB8Eb59";
+
+    repo.insertIfNew("0xaa00000000000000000000000000000000000001", "HIT", "Hit", POOL, "active", null, null, now);
+    repo.insertIfNew("0xbb00000000000000000000000000000000000002", "MISS", "Miss", "0xdead", "active", null, null, now);
+
+    // Swap logs report addresses lower-cased; the stored pair keeps its checksum casing.
+    const found = repo.listByPairAddresses([POOL.toLowerCase()]).map((t) => t.symbol);
+    expect(found).toEqual(["HIT"]);
+  });
+
+  it("sends a trading unindexed coin to the front of the recheck queue", () => {
+    const db = openDatabase(":memory:");
+    const repo = new TokenRepo(db);
+    const now = Date.now();
+    const addr = "0xaa00000000000000000000000000000000000003";
+    repo.insertIfNew(addr, "T", "T", "0xp", "unindexed", null, null, now);
+    repo.markMarketChecked([addr], now);
+
+    repo.markUnindexedForImmediateRecheck(addr);
+
+    // The sweep orders by oldest-checked, so 0 puts it first — an unindexed coin cannot
+    // alert at all until it is resolved, and a trading one should not wait hours.
+    expect(db.prepare("SELECT last_checked_at FROM tokens WHERE address = ?").get(addr)).toEqual({
+      last_checked_at: 0,
+    });
+  });
+});

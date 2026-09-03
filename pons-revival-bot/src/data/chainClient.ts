@@ -270,6 +270,52 @@ const MAX_MULTICALL_RETRIES = 3;
  * the whole sweep — it'll simply be retried on the next poll. Individual per-call
  * reverts within a successful multicall are skipped the same way (`allowFailure`).
  */
+const POOL_TOKEN0_ABI = parseAbiItem("function token0() view returns (address)");
+const POOL_TOKEN1_ABI = parseAbiItem("function token1() view returns (address)");
+
+/**
+ * Reads which two tokens each pool holds, so a swap log can be traced back to a coin.
+ *
+ * Swap logs name the pool, not the token. The bot knows the pool for only some coins —
+ * 60,395 of its unindexed launchpad coins have one recorded and 129,553 do not — so
+ * without this a coin whose pool was never recorded stays invisible no matter how hard it
+ * is being bought. Resolving pools straight from the chain lets the bot learn the mapping
+ * from the trading itself.
+ *
+ * Failures are skipped rather than thrown: a "pool" that is not a pool (any contract can
+ * emit a matching topic) simply reverts, and that is expected, not exceptional.
+ */
+export async function readPoolTokens(
+  client: ChainClient,
+  poolAddresses: string[],
+  batchSize: number,
+  logger: Logger
+): Promise<Map<string, { token0: string; token1: string }>> {
+  const out = new Map<string, { token0: string; token1: string }>();
+  for (let i = 0; i < poolAddresses.length; i += batchSize) {
+    const batch = poolAddresses.slice(i, i + batchSize);
+    const contracts = batch.flatMap((address) => [
+      { address: address as `0x${string}`, abi: [POOL_TOKEN0_ABI], functionName: "token0" as const },
+      { address: address as `0x${string}`, abi: [POOL_TOKEN1_ABI], functionName: "token1" as const },
+    ]);
+    try {
+      const results = await client.multicall({ contracts, allowFailure: true });
+      for (let j = 0; j < batch.length; j += 1) {
+        const t0 = results[j * 2];
+        const t1 = results[j * 2 + 1];
+        if (t0?.status !== "success" || t1?.status !== "success") continue;
+        out.set(batch[j]!.toLowerCase(), {
+          token0: String(t0.result).toLowerCase(),
+          token1: String(t1.result).toLowerCase(),
+        });
+      }
+    } catch (err) {
+      logger.warn({ err: String(err), batch: batch.length }, "Pool token resolution batch failed, skipping");
+    }
+  }
+  return out;
+}
+
 export async function readGraduationStatuses(
   client: ChainClient,
   calls: { factoryAddress: string; tokenAddress: string }[],

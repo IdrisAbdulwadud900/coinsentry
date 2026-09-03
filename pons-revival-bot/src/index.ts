@@ -149,6 +149,9 @@ async function main(): Promise<void> {
     dexPoolDiscoveryEnabled: config.DEX_POOL_DISCOVERY_ENABLED,
     ponsLaunchpadOnly: config.PONS_LAUNCHPAD_ONLY,
     ponsFactoryFilter: config.PONS_FACTORY_FILTER || null,
+    robinhoodRpcUrl: config.ROBINHOOD_RPC_URL,
+    swapScanMaxChunksPerCycle: config.SWAP_SCAN_MAX_CHUNKS_PER_CYCLE,
+    resolvedPoolCache: new Set<string>(),
     poolChainConfigs: buildPoolChainConfigs({
       robinhood: config.ROBINHOOD_RPC_URL,
       bsc: config.BSC_RPC_URL || undefined,
