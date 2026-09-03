@@ -96,12 +96,19 @@ export class TokenRepo {
    * are re-checked every single cycle, giving the fastest possible revival detection),
    * then everything else round-robins oldest-checked-first so no token ever starves.
    */
-  listTrackableForCycle(limit: number, chains?: string[], ponsOnly = false): TokenRow[] {
+  listTrackableForCycle(limit: number, chains?: string[], ponsOnly = false, ponsFactory?: string | null): TokenRow[] {
     // Pons-only mode narrows the scan to coins that came from the two Pons launchpad
     // factories, ignoring everything discovered by watching DEX pools directly. Those DEX
     // scans pulled in the whole chain — 458,000 tokens against roughly 20,000 launchpad
     // coins — and the scan budget was spread across all of it.
-    const ponsFilter = ponsOnly ? " AND t.factory_address IS NOT NULL" : "";
+    // ponsFactory narrows further to ONE launchpad version (v2 in production). v1 is a
+    // retired launchpad whose 1,739 coins are almost entirely dead; excluding them keeps
+    // the budget on the launchpad that still mints.
+    const ponsFilter = ponsFactory
+      ? ` AND t.factory_address = '${ponsFactory.replace(/'/g, "")}' COLLATE NOCASE`
+      : ponsOnly
+        ? " AND t.factory_address IS NOT NULL"
+        : "";
     // Focus mode narrows the scan to one chain, which spends the whole per-cycle budget
     // there instead of spreading it — the same budget then revisits each of that chain's
     // coins far more often.
@@ -182,9 +189,15 @@ export class TokenRepo {
     ponsOnly = false,
     /** Restrict to the young fast lane entirely — used by the fast cycle, whose whole
      * purpose is promoting brand-new pairs the moment DexScreener indexes them. */
-    youngOnly = false
+    youngOnly = false,
+    /** Narrow to one launchpad version; see listTrackableForCycle. */
+    ponsFactory?: string | null
   ): TokenRow[] {
-    const ponsFilter = ponsOnly ? " AND factory_address IS NOT NULL" : "";
+    const ponsFilter = ponsFactory
+      ? ` AND factory_address = '${ponsFactory.replace(/'/g, "")}' COLLATE NOCASE`
+      : ponsOnly
+        ? " AND factory_address IS NOT NULL"
+        : "";
     const youngFilter = youngOnly ? " AND first_seen_at >= ?" : "";
     return this.db
       .prepare<
@@ -369,13 +382,21 @@ export class TokenRepo {
    * yet, so they're always inserted 'unindexed', and previously got zero graduation
    * tracking until promoted) and bounds the result to tokens launched since `cutoffTs`,
    * so query/RPC cost stays constant regardless of total historical token count. */
-  listUngraduatedRecentlyLaunched(cutoffTs: number): TokenRow[] {
+  listUngraduatedRecentlyLaunched(cutoffTs: number, limit: number): TokenRow[] {
+    // Newest first, hard-capped. The time window alone stopped bounding this once the
+    // unindexed sweep began promoting coins in bulk: the window holds thousands, and the
+    // 20-second fast cycle stretched to 79-91 seconds working through them. Youngest coins
+    // are exactly what a fast lane is for; anything that ages past the cap is still covered
+    // by the slow cycle's market scan.
     return this.db
       .prepare<
-        [number],
+        [number, number],
         TokenRow
-      >("SELECT * FROM tokens WHERE graduated = 0 AND factory_address IS NOT NULL AND first_seen_at >= ?")
-      .all(cutoffTs);
+      >(
+        `SELECT * FROM tokens WHERE graduated = 0 AND factory_address IS NOT NULL AND first_seen_at >= ?
+         ORDER BY first_seen_at DESC LIMIT ?`
+      )
+      .all(cutoffTs, limit);
   }
 
   /**
@@ -396,13 +417,17 @@ export class TokenRepo {
   /** Recently-launched tokens with live DexScreener data (i.e. not 'unindexed') that
    * haven't hit the momentum re-alert cap yet (0 = never alerted, 1 = alerted once and
    * eligible for one bounded re-alert) — candidates for the fast momentum sweep. */
-  listRecentlyLaunchedActive(cutoffTs: number): TokenRow[] {
+  listRecentlyLaunchedActive(cutoffTs: number, limit: number): TokenRow[] {
+    // Bounded for the same reason as listUngraduatedRecentlyLaunched above.
     return this.db
       .prepare<
-        [number],
+        [number, number],
         TokenRow
-      >("SELECT * FROM tokens WHERE status != 'unindexed' AND momentum_alert_count < 2 AND first_seen_at >= ?")
-      .all(cutoffTs);
+      >(
+        `SELECT * FROM tokens WHERE status != 'unindexed' AND momentum_alert_count < 2 AND first_seen_at >= ?
+         ORDER BY first_seen_at DESC LIMIT ?`
+      )
+      .all(cutoffTs, limit);
   }
 
   /** Records the highest USD-raised alert tier crossed so far — never re-fires for an

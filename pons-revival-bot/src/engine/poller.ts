@@ -745,6 +745,8 @@ export interface PollerDeps {
   unindexedRecheckHours: number;
   graduationCheckBatchSize: number;
   snapshotRetentionDays: number;
+  /** Rows the unindexed recheck sweep may promote per slow cycle. */
+  unindexedSweepBatchSize: number;
   telegramChatId: string;
   dryRunAlerts: boolean;
   ethPriceClient: EthPriceClient;
@@ -769,6 +771,8 @@ export interface PollerDeps {
   dexPoolDiscoveryEnabled: boolean;
   /** Restrict scanning and alerting to the two Pons launchpad factories. */
   ponsLaunchpadOnly: boolean;
+  /** When set, only this Pons factory's coins are scanned (v2 in production). */
+  ponsFactoryFilter?: string | null;
   /** Per-chain pool-factory scanning setup (Robinhood, plus BSC/Ethereum when configured). */
   poolChainConfigs: ChainPoolConfig[];
   /** Blockscout-compatible holder/metadata APIs, keyed by chain. Robinhood and Ethereum
@@ -1465,9 +1469,10 @@ async function runUnindexedSweep(deps: PollerDeps, now: number, youngOnly = fals
     cutoff,
     youngFirstSeenCutoff,
     youngCheckedCutoff,
-    youngOnly ? 90 : 600,
+    youngOnly ? 90 : deps.unindexedSweepBatchSize,
     deps.ponsLaunchpadOnly,
-    youngOnly
+    youngOnly,
+    deps.ponsFactoryFilter
   );
   if (due.length === 0) return;
 
@@ -1668,7 +1673,8 @@ export async function runUngraduatedFastSweep(deps: PollerDeps, now: number): Pr
   } = deps;
 
   const cutoff = now - ungraduatedFastWindowHours * 60 * 60 * 1000;
-  const due = tokenRepo.listUngraduatedRecentlyLaunched(cutoff).filter((t) => t.factory_address);
+  // 400 keeps the 20-second fast cycle inside its interval; see the query's comment.
+  const due = tokenRepo.listUngraduatedRecentlyLaunched(cutoff, 400).filter((t) => t.factory_address);
   if (due.length === 0) return;
 
   const byAddress = new Map(due.map((t) => [t.address, t]));
@@ -1893,7 +1899,7 @@ export async function runMomentumFastSweep(deps: PollerDeps, now: number): Promi
   } = deps;
 
   const cutoff = now - earlyMomentumMaxAgeMinutes * 60 * 1000;
-  const due = tokenRepo.listRecentlyLaunchedActive(cutoff);
+  const due = tokenRepo.listRecentlyLaunchedActive(cutoff, 400);
   if (due.length === 0) return;
 
   const pairsByToken = await lookupPairsAcrossChains(deps, due);
@@ -2184,7 +2190,8 @@ export async function runPollCycle(deps: PollerDeps): Promise<void> {
   const tracked = tokenRepo.listTrackableForCycle(
     deps.marketScanBatchSize,
     focused.length === 1 ? focused : undefined,
-    deps.ponsLaunchpadOnly
+    deps.ponsLaunchpadOnly,
+    deps.ponsFactoryFilter
   );
   logHeap(deps, "after-load-tracked", { tracked: tracked.length });
   if (tracked.length === 0) {

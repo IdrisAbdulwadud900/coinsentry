@@ -194,7 +194,7 @@ describe("TokenRepo graduation tracking", () => {
   });
 
   it("listUngraduatedRecentlyLaunched includes unindexed tokens (unlike listUngraduatedTrackable)", () => {
-    const due = repo.listUngraduatedRecentlyLaunched(0);
+    const due = repo.listUngraduatedRecentlyLaunched(0, 100);
     // 0xDDD is excluded (no factory_address); 0xCCC ('unindexed') is included here.
     expect(due.map((t) => t.address).sort()).toEqual(["0xaaa", "0xbbb", "0xccc"]);
   });
@@ -202,13 +202,13 @@ describe("TokenRepo graduation tracking", () => {
   it("listUngraduatedRecentlyLaunched respects the recency cutoff", () => {
     const now = Date.now();
     repo.insertIfNew("0xEEE", "OLD", "Old Token", "0xpairEEE", "active", null, "0xFactory1", now - 1_000_000);
-    const due = repo.listUngraduatedRecentlyLaunched(now - 500_000);
+    const due = repo.listUngraduatedRecentlyLaunched(now - 500_000, 100);
     expect(due.map((t) => t.address)).not.toContain("0xeee");
   });
 
   it("listUngraduatedRecentlyLaunched excludes already-graduated tokens", () => {
     repo.markGraduated("0xaaa", "1", "1", Date.now());
-    const due = repo.listUngraduatedRecentlyLaunched(0);
+    const due = repo.listUngraduatedRecentlyLaunched(0, 100);
     expect(due.map((t) => t.address)).not.toContain("0xaaa");
   });
 });
@@ -228,27 +228,27 @@ describe("TokenRepo momentum tracking", () => {
   });
 
   it("listRecentlyLaunchedActive excludes unindexed tokens", () => {
-    const due = repo.listRecentlyLaunchedActive(0);
+    const due = repo.listRecentlyLaunchedActive(0, 100);
     expect(due.map((t) => t.address).sort()).toEqual(["0xaaa", "0xbbb"]);
   });
 
   it("listRecentlyLaunchedActive excludes tokens once momentum_alert_count reaches the cap", () => {
     repo.incrementMomentumAlertCount("0xaaa");
     repo.incrementMomentumAlertCount("0xaaa");
-    const due = repo.listRecentlyLaunchedActive(0);
+    const due = repo.listRecentlyLaunchedActive(0, 100);
     expect(due.map((t) => t.address)).toEqual(["0xbbb"]);
   });
 
   it("listRecentlyLaunchedActive still includes a token after just one momentum alert (eligible for re-alert)", () => {
     repo.incrementMomentumAlertCount("0xaaa");
-    const due = repo.listRecentlyLaunchedActive(0);
+    const due = repo.listRecentlyLaunchedActive(0, 100);
     expect(due.map((t) => t.address).sort()).toEqual(["0xaaa", "0xbbb"]);
   });
 
   it("listRecentlyLaunchedActive respects the recency cutoff", () => {
     const now = Date.now();
     repo.insertIfNew("0xDDD", "OLD", "Old Token", "0xpairDDD", "active", null, "0xFactory1", now - 1_000_000);
-    const due = repo.listRecentlyLaunchedActive(now - 500_000);
+    const due = repo.listRecentlyLaunchedActive(now - 500_000, 100);
     expect(due.map((t) => t.address)).not.toContain("0xddd");
   });
 });
@@ -442,5 +442,29 @@ describe("Pons-launchpad-only scanning", () => {
 
     const all = tokenRepo.listTrackableForCycle(50, undefined, false).map((t) => t.symbol).sort();
     expect(all).toEqual(["DEX", "PONS"]);
+  });
+});
+
+describe("single-factory (Pons v2) scanning", () => {
+  it("scans only the named factory's coins, ignoring the retired launchpad", () => {
+    const db = openDatabase(":memory:");
+    const repo = new TokenRepo(db);
+    const now = Date.now();
+    const V2 = "0xA5aAb3F0c6EeadF30Ef1D3Eb997108E976351feB";
+    const V1 = "0x0c37a24F5D23A486FA692d1500881d698B1F77a4";
+
+    repo.insertIfNew("0xaa00000000000000000000000000000000000001", "NEW", "New", "0xp1", "active", null, V2, now - 7200000);
+    repo.insertIfNew("0xbb00000000000000000000000000000000000002", "OLD", "Old", "0xp2", "active", null, V1, now - 7200000);
+
+    const v2Only = repo.listTrackableForCycle(50, undefined, true, V2).map((t) => t.symbol);
+    expect(v2Only).toEqual(["NEW"]);
+
+    // Address casing must not matter — the DB stores lowercase, config carries checksum case.
+    const lower = repo.listTrackableForCycle(50, undefined, true, V2.toLowerCase()).map((t) => t.symbol);
+    expect(lower).toEqual(["NEW"]);
+
+    // Without the filter, both launchpads are in scope.
+    const both = repo.listTrackableForCycle(50, undefined, true).map((t) => t.symbol).sort();
+    expect(both).toEqual(["NEW", "OLD"]);
   });
 });

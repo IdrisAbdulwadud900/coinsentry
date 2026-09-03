@@ -100,6 +100,16 @@ const ConfigSchema = z.object({
   // spread across all of it, so launchpad coins were revisited rarely. With this on, the
   // budget covers the launchpad repeatedly instead of the chain thinly.
   PONS_LAUNCHPAD_ONLY: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
+  // Narrow further to a single launchpad version. Set to the v2 factory address in
+  // production: v1 is retired and its 1,739 coins are almost entirely dead, so scanning
+  // them spends budget that belongs to the launchpad still minting ~18.7k coins a day.
+  // Regex-constrained because this value is interpolated into a SQL fragment (the filter
+  // varies the statement shape, so it cannot be a bound parameter). Restricting it to a
+  // 0x-prefixed 20-byte hex address makes anything injectable fail to load at startup.
+  PONS_FACTORY_FILTER: z
+    .string()
+    .regex(/^(0x[a-fA-F0-9]{40})?$/, "PONS_FACTORY_FILTER must be a 0x address or empty")
+    .default(""),
   // Bearer token for X (Twitter) API v2 recent search, used to list the accounts that have
   // posted a coin's contract address. X removed free search access in 2023, so this needs a
   // paid tier; left blank, alerts simply omit the section rather than implying nobody has
@@ -150,6 +160,18 @@ const ConfigSchema = z.object({
   // trackable set is still covered, just across consecutive cycles. At the default
   // 250 req/min and 30 addresses per request, 50,000 tokens ≈ 6.7 minutes of API time.
   MARKET_SCAN_BATCH_SIZE: z.coerce.number().int().positive().default(50_000),
+  // Rows the unindexed recheck sweep promotes per slow cycle.
+  //
+  // This is the single biggest determinant of what the bot can see at all: an 'unindexed'
+  // coin is not in the market scan, so it CANNOT alert until this sweep finds DexScreener
+  // data for it. With 199,867 unindexed Pons coins and the old budget of 600, a full pass
+  // took ~1.2 days — a coin that started running while queued was invisible until its turn
+  // came, which is exactly how 5x/10x/20x moves were being missed outright.
+  //
+  // 8,000 = ~267 DexScreener requests (30 addresses each) per cycle. The limit is 250/min,
+  // i.e. 1,250 per 5-minute cycle, and the whole cycle currently uses ~87 of them in 34s of
+  // a 300s budget. A full pass now takes ~2 hours instead of ~1.2 days.
+  UNINDEXED_SWEEP_BATCH_SIZE: z.coerce.number().int().positive().default(8_000),
   DEXSCREENER_CONCURRENCY: z.coerce.number().int().positive().default(4),
   DEXSCREENER_REQUESTS_PER_MINUTE: z.coerce.number().int().positive().default(250),
 

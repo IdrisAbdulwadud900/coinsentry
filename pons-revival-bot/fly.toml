@@ -75,7 +75,15 @@ primary_region = "iad"
   # stays under that. Because the hot set sorts first and rotates oldest-checked within
   # itself, the ~1,300 genuinely active coins are each revisited about hourly — against
   # roughly every 40 hours before this ordering existed.
-  MARKET_SCAN_BATCH_SIZE = "2000"
+  # Raised with the cycle running at 34s of its 300s budget and DexScreener usage at ~87
+  # of the 1,250 requests a 5-minute cycle allows. Covers the ~24k scannable Pons coins in
+  # roughly four cycles instead of twelve.
+  MARKET_SCAN_BATCH_SIZE = "6000"
+  # The gate on what the bot can see at all: an unindexed coin cannot alert until this
+  # sweep finds market data for it. 199,867 Pons coins sit unindexed, so at the old 600 a
+  # full pass took ~1.2 days and a coin that started running while queued was invisible
+  # until its turn came. At 8,000 a full pass takes ~2 hours.
+  UNINDEXED_SWEEP_BATCH_SIZE = "8000"
 
   DEAD_MIN_AGE_HOURS = "24"
   DEAD_VOLUME_24H_USD = "500"
@@ -101,6 +109,8 @@ primary_region = "iad"
   # launchpad factories (v1 and v2) are discovered and scanned now.
   DEX_POOL_DISCOVERY_ENABLED = "false"
   PONS_LAUNCHPAD_ONLY = "true"
+  # v2 only. v1 (0x0c37a24F...) is retired: 1,739 coins, almost all dead.
+  PONS_FACTORY_FILTER = "0xA5aAb3F0c6EeadF30Ef1D3Eb997108E976351feB"
   ROBINHOOD_RPC_URL = "https://rpc.mainnet.chain.robinhood.com"
   PONS_FACTORY_ACTIVE = "0xA5aAb3F0c6EeadF30Ef1D3Eb997108E976351feB"
   PONS_FACTORY_ACTIVE_START_BLOCK = "8991118"

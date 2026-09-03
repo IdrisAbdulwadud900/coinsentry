@@ -128,6 +128,7 @@ async function main(): Promise<void> {
     unindexedRecheckHours: config.UNINDEXED_RECHECK_HOURS,
     graduationCheckBatchSize: config.GRADUATION_CHECK_BATCH_SIZE,
     snapshotRetentionDays: config.SNAPSHOT_RETENTION_DAYS,
+    unindexedSweepBatchSize: config.UNINDEXED_SWEEP_BATCH_SIZE,
     telegramChatId: config.TELEGRAM_CHAT_ID,
     dryRunAlerts: config.DRY_RUN_ALERTS,
     ethPriceClient,
@@ -147,6 +148,7 @@ async function main(): Promise<void> {
     enabledChains,
     dexPoolDiscoveryEnabled: config.DEX_POOL_DISCOVERY_ENABLED,
     ponsLaunchpadOnly: config.PONS_LAUNCHPAD_ONLY,
+    ponsFactoryFilter: config.PONS_FACTORY_FILTER || null,
     poolChainConfigs: buildPoolChainConfigs({
       robinhood: config.ROBINHOOD_RPC_URL,
       bsc: config.BSC_RPC_URL || undefined,
