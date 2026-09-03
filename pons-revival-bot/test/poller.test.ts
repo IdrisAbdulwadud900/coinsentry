@@ -2183,3 +2183,29 @@ describe("reversal reaches coins resting on their floor", () => {
     expect(sendAlert).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("never pings the same coin twice", () => {
+  let db: Db;
+  beforeEach(() => {
+    db = openDatabase(":memory:");
+  });
+
+  // The cooldown only spaced repeats out by hours, so a coin could reappear as it crossed
+  // tiers or re-qualified. The owner wants each coin once.
+  it("refuses a second entry alert for a coin already alerted", async () => {
+    const now = Date.now();
+    const sendAlert = vi.fn(async () => {});
+    const { deps, tokenRepo } = baseDeps(db, {
+      dex: { lookupBatch: vi.fn(async () => [fakePair("0xAAA", 20, 5000, 8000)]) } as unknown as DexScreenerClient,
+      notifier: { sendAlert } as unknown as Notifier,
+      dryRunAlerts: false,
+    });
+    tokenRepo.insertIfNew("0xAAA", "FOO", "Foo", "0xpairAAA", "active", null, "0xFactory1", ALERTABLE_AGE(now));
+    // Mark it as already alerted an hour ago.
+    tokenRepo.setFirstAlertMarketCap("0xaaa", 4000, now - 3600000);
+
+    await runMomentumFastSweep(deps, now);
+
+    expect(sendAlert).not.toHaveBeenCalled();
+  });
+});

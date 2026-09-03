@@ -157,6 +157,22 @@ const YOUNG_UNINDEXED_RECHECK_MS = 5 * 60 * 1000;
  *    above $20k is out of scope no matter which signal spotted it.
  * 2. Liquidity/buys floors, honeypot heuristic, and the links-or-traction rule below.
  */
+/**
+ * Blocks any coin the bot has already pinged, permanently.
+ *
+ * The alert cooldown only spaced repeats out by hours, so the same coin could reappear
+ * again and again as it crossed tiers or re-qualified — the owner does not want to see a
+ * coin twice. Milestone (10x/100x) and dump/demotion alerts deliberately do NOT go through
+ * this: they report on a position already taken from a first alert, which is the one case
+ * where hearing about the same coin again is the point.
+ */
+function alreadyPingedBlockReason(token: TokenRow): string | null {
+  if (token.first_alert_at != null) {
+    return `already alerted on ${new Date(token.first_alert_at).toISOString()}`;
+  }
+  return null;
+}
+
 function entryAlertBlockReason(
   marketCapUsd: number | null,
   snapshot: Pick<MarketSnapshot, "websiteUrl" | "socials" | "buys1h" | "sells1h" | "liquidityUsd"> | null | undefined,
@@ -844,7 +860,7 @@ async function checkAndSendMarketCapTierAlert(
     if (token.last_block_at != null && now - token.last_block_at < GATE_RECHECK_INTERVAL_MS) return;
     snapshot = await fetchSnapshotForToken(deps, token);
   }
-  const blockReason = entryAlertBlockReason(marketCapUsd, snapshot, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
+  const blockReason = alreadyPingedBlockReason(token) ?? entryAlertBlockReason(marketCapUsd, snapshot, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
   if (blockReason) {
     // Transient conditions (market cap not resolved yet, links not indexed yet, a
     // zero-sell hour) — deliberately do NOT consume the tier index or capture an entry
@@ -1207,7 +1223,7 @@ async function handleDeadToken(deps: PollerDeps, token: TokenRow, current: Retur
   // stamp: `last_alert_at` also drives isInCooldown, so stamping it on every blocked cycle
   // held the token in a rolling 6h cooldown that outlived the block itself and silently
   // suppressed the alert long after the coin qualified again.
-  const gateReason = entryAlertBlockReason(resolveMarketCapUsd(current), current, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
+  const gateReason = alreadyPingedBlockReason(token) ?? entryAlertBlockReason(resolveMarketCapUsd(current), current, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
   if (gateReason) {
     recordGateBlock(deps, token, "revival", gateReason);
     tokenRepo.setRevivalConfirmCount(token.address, next);
@@ -1346,7 +1362,7 @@ async function handleBreakoutCandidate(
 
   const gateReason =
     untrustworthyMarketCapReason(deps, resolveMarketCapUsd(current), current.liquidityUsd) ??
-    entryAlertBlockReason(
+    alreadyPingedBlockReason(token) ?? entryAlertBlockReason(
       resolveMarketCapUsd(current),
       current,
       alertAgeMinutes(token, now)
@@ -1602,7 +1618,7 @@ export async function runGraduationSweep(deps: PollerDeps, now: number): Promise
     if (isMarketCapTrustworthy(marketCapUsd, snap?.liquidityUsd ?? null, deps.minLiquidityToMcapPct)) {
       tokenRepo.updateAthMarketCap(token.address, marketCapUsd!);
     }
-    const blockReason = entryAlertBlockReason(marketCapUsd, snap, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
+    const blockReason = alreadyPingedBlockReason(token) ?? entryAlertBlockReason(marketCapUsd, snap, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
     if (blockReason) {
       recordGateBlock(deps, token, "graduation", blockReason);
       continue;
@@ -1756,7 +1772,7 @@ export async function runUngraduatedFastSweep(deps: PollerDeps, now: number): Pr
       // silently and permanently dropped for the majority of tokens.
       const snap = await fetchSnapshotForToken(deps, token);
       const resolvedMcap = resolveMarketCapUsd(snap, onChainMcap);
-      const blockReason = entryAlertBlockReason(resolvedMcap, snap, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
+      const blockReason = alreadyPingedBlockReason(token) ?? entryAlertBlockReason(resolvedMcap, snap, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
       if (blockReason) {
         recordGateBlock(deps, token, "graduation", blockReason);
         continue;
@@ -1955,7 +1971,7 @@ export async function runMomentumFastSweep(deps: PollerDeps, now: number): Promi
     // Momentum now describes an established coin being suddenly bid, not a new pair in its
     // first hour, so it takes the established ceiling rather than the launch cap.
     const gateReason =
-      entryAlertBlockReason(
+      alreadyPingedBlockReason(token) ?? entryAlertBlockReason(
         current.marketCapUsd,
         current,
         alertAgeMinutes(token, now)

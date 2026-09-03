@@ -299,6 +299,24 @@ function subHeader(token: TokenRow, ageText?: string): string | undefined {
  * didn't. Silence here now means nothing was flagged.
  */
 /**
+ * Exact time the bot first alerted this coin, in UTC.
+ *
+ * On a first alert this is the moment of sending; on a milestone or dump warning it is the
+ * original entry, which is what makes the multiple meaningful — "10x" is only useful
+ * alongside when the clock started. UTC because the bot and the trader are not necessarily
+ * in the same timezone and an ambiguous timestamp is worse than none.
+ */
+function formatFirstAlertedLine(token: TokenRow, now: number): string {
+  const at = token.first_alert_at ?? now;
+  const d = new Date(at);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const stamp =
+    `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ` +
+    `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} UTC`;
+  return `🕐 first alerted <b>${stamp}</b>`;
+}
+
+/**
  * Which X accounts have posted this contract address, biggest first.
  *
  * Follower counts are the point: five throwaway accounts and one 90,000-follower account
@@ -457,7 +475,11 @@ export function buildRevivalAlertHtml(
     formatRiskLine(devStatus, holderConcentration, earlyBuyConcentration, solanaSafety),
   ];
   const performance = [joinLine(formatSinceAlertCompact(token, marketCapUsd), formatAthCompact(token, marketCapUsd))];
-  const footer = [formatFooterLinks(dexUrl, current), `<code>${token.address}</code>`];
+  const footer = [
+    formatFirstAlertedLine(token, Date.now()),
+    formatFooterLinks(dexUrl, current),
+    `<code>${token.address}</code>`,
+  ];
 
   return renderMessage(header, core, risk, performance, footer, [DISCLAIMER]);
 }
@@ -498,7 +520,11 @@ export function buildGraduationAlertHtml(
     formatRiskLine(devStatus, holderConcentration, earlyBuyConcentration, solanaSafety),
   ];
   const performance = [joinLine(formatSinceAlertCompact(token, resolvedMcap), formatAthCompact(token, resolvedMcap))];
-  const footer = [formatFooterLinks(dexUrl, snapshot), `<code>${token.address}</code>`];
+  const footer = [
+    formatFirstAlertedLine(token, Date.now()),
+    formatFooterLinks(dexUrl, snapshot),
+    `<code>${token.address}</code>`,
+  ];
 
   return renderMessage(header, core, risk, performance, footer, [DISCLAIMER]);
 }
@@ -548,7 +574,11 @@ export function buildMarketCapAlertHtml(
     formatRiskLine(devStatus, holderConcentration, earlyBuyConcentration, solanaSafety),
   ];
   const performance = [joinLine(formatSinceAlertCompact(token, marketCapUsd), formatAthCompact(token, marketCapUsd))];
-  const footer = [formatFooterLinks(dexUrl, snapshot), `<code>${token.address}</code>`];
+  const footer = [
+    formatFirstAlertedLine(token, Date.now()),
+    formatFooterLinks(dexUrl, snapshot),
+    `<code>${token.address}</code>`,
+  ];
 
   return renderMessage(header, core, risk, performance, footer, [DISCLAIMER]);
 }
@@ -598,7 +628,11 @@ export function buildMomentumAlertHtml(
     formatRiskLine(devStatus, holderConcentration, earlyBuyConcentration, solanaSafety),
   ];
   const performance = [joinLine(formatSinceAlertCompact(token, marketCapUsd), formatAthCompact(token, marketCapUsd))];
-  const footer = [formatFooterLinks(dexUrl, current), `<code>${token.address}</code>`];
+  const footer = [
+    formatFirstAlertedLine(token, Date.now()),
+    formatFooterLinks(dexUrl, current),
+    `<code>${token.address}</code>`,
+  ];
 
   return renderMessage(header, core, risk, performance, footer, [DISCLAIMER]);
 }
@@ -644,7 +678,11 @@ export function buildPerformanceMilestoneAlertHtml(
     formatXMentionsLine(xMentions),
     formatRiskLine(devStatus, holderConcentration, earlyBuyConcentration, solanaSafety),
   ];
-  const footer = [formatFooterLinks(dexUrl, snapshot), `<code>${token.address}</code>`];
+  const footer = [
+    formatFirstAlertedLine(token, Date.now()),
+    formatFooterLinks(dexUrl, snapshot),
+    `<code>${token.address}</code>`,
+  ];
 
   return renderMessage(header, core, risk, footer, [DISCLAIMER]);
 }
@@ -676,7 +714,7 @@ export function buildDumpWarningAlertHtml(token: TokenRow, entryMarketCapUsd: nu
           `💰 now <b>${formatUsd(observedMarketCapUsd)}</b> <i>(-${dropPct.toFixed(0)}%)</i>`
         ),
   ];
-  const footer = [`<code>${token.address}</code>`];
+  const footer = [formatFirstAlertedLine(token, Date.now()), `<code>${token.address}</code>`];
 
   return renderMessage(header, core, footer, [DISCLAIMER]);
 }
@@ -722,7 +760,11 @@ export function buildBreakoutAlertHtml(
     formatRiskLine(devStatus, holderConcentration, earlyBuyConcentration, solanaSafety),
   ];
   const performance = [joinLine(formatSinceAlertCompact(token, marketCapUsd), formatAthCompact(token, marketCapUsd))];
-  const footer = [formatFooterLinks(dexUrl, current), `<code>${token.address}</code>`];
+  const footer = [
+    formatFirstAlertedLine(token, Date.now()),
+    formatFooterLinks(dexUrl, current),
+    `<code>${token.address}</code>`,
+  ];
 
   return renderMessage(header, core, risk, performance, footer, [DISCLAIMER]);
 }
@@ -742,7 +784,7 @@ export function buildDemotionAlertHtml(token: TokenRow, current: MarketSnapshot,
       `💧 <b>${formatUsd(liquidity)}</b> <i>(${liquidityPct.toFixed(0)}% of median)</i>`
     ),
   ];
-  const footer = [`<code>${token.address}</code>`];
+  const footer = [formatFirstAlertedLine(token, Date.now()), `<code>${token.address}</code>`];
 
   return renderMessage(header, core, footer, [DISCLAIMER]);
 }

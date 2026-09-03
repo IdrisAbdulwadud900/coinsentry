@@ -712,3 +712,24 @@ describe("bonding curve line", () => {
     expect(html).toContain("Bonding Curve: <b>72% (3.60 / 5.00 ETH)</b>");
   });
 });
+
+describe("first-alerted timestamp", () => {
+  it("stamps the original alert time on a later milestone, not the current time", () => {
+    const firstAt = Date.UTC(2026, 8, 3, 12, 34, 56);
+    const token = { ...fakeToken(), first_alert_at: firstAt, first_alert_market_cap_usd: 5000 };
+
+    const html = buildRevivalAlertHtml(token, fakeSnapshot(), baseline, 30, "robinhood");
+
+    // "10x" only means something alongside when the clock started.
+    expect(html).toContain("first alerted <b>2026-09-03 12:34:56 UTC</b>");
+  });
+
+  it("falls back to now for a coin being alerted for the first time", () => {
+    const token = { ...fakeToken(), first_alert_at: null };
+
+    const html = buildRevivalAlertHtml(token, fakeSnapshot(), baseline, 30, "robinhood");
+
+    expect(html).toContain("first alerted <b>");
+    expect(html).toContain(" UTC</b>");
+  });
+});
