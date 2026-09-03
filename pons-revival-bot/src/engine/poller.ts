@@ -2100,6 +2100,37 @@ async function runSwapActivityScan(deps: PollerDeps, now: number): Promise<void>
   }
 
   let promoted = 0;
+  // Unindexed coins caught mid-trade are resolved right here rather than queued.
+  //
+  // Queuing costs two cycles — one for the recheck sweep to promote, another for the
+  // market scan to snapshot — before the coin can alert at all. For a $3k coin that just
+  // started being bought, ten minutes is the difference between catching the move and
+  // reading about it. This is a handful of lookups on coins already proven to be trading,
+  // so it is far cheaper than the sweep's blind scanning of dormant ones.
+  const tradingUnindexed = traded.filter((t) => t.status === "unindexed").slice(0, 60);
+  if (tradingUnindexed.length > 0) {
+    try {
+      const pairs = await lookupPairsAcrossChains(deps, tradingUnindexed);
+      for (const token of tradingUnindexed) {
+        const pair = pickCanonicalPair(pairs, token.address);
+        const liquidityUsd = pair?.liquidity?.usd ?? 0;
+        if (pair && liquidityUsd >= deps.discoveryMinLiquidityUsd) {
+          tokenRepo.promoteFromUnindexed(
+            token.address,
+            pair.baseToken.symbol ?? "?",
+            pair.baseToken.name ?? pair.baseToken.symbol ?? "Unknown",
+            pair.pairAddress,
+            now
+          );
+          promoted += 1;
+        }
+      }
+    } catch (err) {
+      // Falling back to the queue costs latency, not correctness.
+      logger.warn({ err: String(err) }, "Immediate promotion of trading coins failed, falling back to the sweep");
+    }
+  }
+
   for (const token of traded) {
     tokenRepo.markTraded(token.address, now);
     if (token.status === "unindexed") {
@@ -2112,7 +2143,7 @@ async function runSwapActivityScan(deps: PollerDeps, now: number): Promise<void>
   }
   if (traded.length > 0) {
     logger.info(
-      { poolsTraded: pools.size, matchedTokens: traded.length, queuedForRecheck: promoted },
+      { poolsTraded: pools.size, matchedTokens: traded.length, promotedNow: promoted },
       "Swap activity scan complete"
     );
   }
