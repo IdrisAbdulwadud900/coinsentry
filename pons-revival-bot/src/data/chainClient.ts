@@ -184,6 +184,9 @@ async function getLogsBisecting(
  * is both sufficient and robust: it needs no knowledge of the event's name or its data
  * layout, which means a launchpad can be swapped in from config alone.
  */
+/** Floor for the adaptive halving above; below this a failure is a real error, not density. */
+const MIN_TOPIC_SCAN_SPAN = 2_000n;
+
 export async function scanLaunchesByTopic(
   client: ChainClient,
   factoryAddress: string,
@@ -204,16 +207,25 @@ export async function scanLaunchesByTopic(
     topic && topic.length >= 42 ? `0x${topic.slice(-40)}` : null;
 
   let cursor = fromBlock;
-  const chunk = BigInt(chunkSize);
+  let chunk = BigInt(chunkSize);
   while (cursor <= head) {
     const toBlock = cursor + chunk - 1n > head ? head : cursor + chunk - 1n;
     try {
-      const logs = await client.getLogs({
-        address: factoryAddress as `0x${string}`,
-        fromBlock: cursor,
-        toBlock,
-      });
-      for (const log of logs as unknown as { topics: string[]; blockNumber: bigint }[]) {
+      const logs = await client.request({
+        method: "eth_getLogs",
+        params: [
+          {
+            address: factoryAddress as `0x${string}`,
+            fromBlock: `0x${cursor.toString(16)}`,
+            toBlock: `0x${toBlock.toString(16)}`,
+            // Filter server-side. Passing no topics made the RPC return every event this
+            // contract emits, which blew past its 10,000-log ceiling and stalled the scan
+            // on the same range indefinitely.
+            topics: [topic0],
+          },
+        ],
+      } as never);
+      for (const log of logs as unknown as { topics: string[]; blockNumber: string }[]) {
         if (log.topics[0]?.toLowerCase() !== topic0.toLowerCase()) continue;
         const tokenAddress = addressFromTopic(log.topics[tokenTopicIndex]);
         if (!tokenAddress) continue;
@@ -222,7 +234,7 @@ export async function scanLaunchesByTopic(
           deployerAddress: deployerTopicIndex != null ? addressFromTopic(log.topics[deployerTopicIndex]) : null,
           poolAddress: poolTopicIndex != null ? addressFromTopic(log.topics[poolTopicIndex]) : null,
           pairTokenAddress: null,
-          blockNumber: log.blockNumber ?? cursor,
+          blockNumber: log.blockNumber != null ? BigInt(log.blockNumber) : cursor,
         });
       }
       if (launches.length >= maxLaunches) {
@@ -230,9 +242,22 @@ export async function scanLaunchesByTopic(
         return { launches, reachedBlock: toBlock };
       }
     } catch (err) {
+      // A range too dense for the RPC's log ceiling must be split, not retried unchanged:
+      // retrying stalls the cursor on the same blocks forever, which is exactly what
+      // happened with a 500,000-block chunk against a launchpad minting ~126 coins per
+      // 3,000 blocks. Halving until it fits lets the scan heal itself at any density.
+      const span = toBlock - cursor + 1n;
+      if (span > MIN_TOPIC_SCAN_SPAN) {
+        chunk = span / 2n;
+        logger.warn(
+          { factoryAddress, fromBlock: cursor.toString(), toBlock: toBlock.toString(), newSpan: chunk.toString() },
+          "Topic launch scan range too dense, halving and retrying"
+        );
+        continue;
+      }
       logger.error(
         { factoryAddress, fromBlock: cursor.toString(), toBlock: toBlock.toString(), err: String(err) },
-        "Topic launch scan chunk failed, stopping for this cycle"
+        "Topic launch scan chunk failed at minimum span, stopping for this cycle"
       );
       return { launches, reachedBlock: cursor - 1n < fromBlock ? fromBlock - 1n : cursor - 1n };
     }
