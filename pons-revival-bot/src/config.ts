@@ -90,6 +90,11 @@ const ConfigSchema = z.object({
   // and fatal once it is not: a multi-day backlog on Robinhood pinned ~511MB of live
   // objects and the process died on its heap limit every cycle. See scanTokenLaunches.
   DISCOVERY_MAX_LAUNCHES_PER_CYCLE: z.coerce.number().int().positive().default(2_000),
+  // How far back factory discovery reaches when it has no cursor. The factories deployed
+  // ~44M blocks below the current head, so starting there on a cold start means days of
+  // replaying ancient launches before anything currently launching is seen. 2M blocks is
+  // ~2.3 days at ~101ms, which covers everything recent enough to still move.
+  DISCOVERY_COLD_START_LOOKBACK_BLOCKS: z.coerce.number().int().positive().default(2_000_000),
   // Watch the chain's DEX pool factories directly, not just the Pons launchpad. Most
   // Robinhood tokens are launched straight onto a DEX and never touch Pons, so without
   // this they were completely invisible (see src/data/dexPoolDiscovery.ts).
@@ -110,6 +115,13 @@ const ConfigSchema = z.object({
   // every 20s and 600 blocks is ~60s of chain, so 4 chunks (~4 minutes of chain) keeps the
   // scan comfortably ahead of real time and absorbs a backlog after any downtime.
   SWAP_SCAN_MAX_CHUNKS_PER_CYCLE: z.coerce.number().int().positive().default(4),
+  // Hours of chain-observed activity that qualify a coin for scanning. Discovery is driven
+  // by two chain feeds — Pons factory launches (new pairs) and swap logs (coins being
+  // bought) — so the scan only revisits what the chain has actually mentioned. Polling the
+  // whole registry instead made cost grow with the number of dead coins that had ever
+  // existed, and left a coin that started moving waiting behind them. 0 restores that old
+  // behaviour.
+  EVENT_DRIVEN_WINDOW_HOURS: z.coerce.number().nonnegative().default(24),
   PONS_FACTORY_FILTER: z
     .string()
     .regex(/^(0x[a-fA-F0-9]{40})?$/, "PONS_FACTORY_FILTER must be a 0x address or empty")

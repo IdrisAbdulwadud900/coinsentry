@@ -166,9 +166,17 @@ const YOUNG_UNINDEXED_RECHECK_MS = 5 * 60 * 1000;
  * this: they report on a position already taken from a first alert, which is the one case
  * where hearing about the same coin again is the point.
  */
-function alreadyPingedBlockReason(token: TokenRow): string | null {
+function alreadyPingedBlockReason(deps: PollerDeps, token: TokenRow): string | null {
   if (token.first_alert_at != null) {
     return `already alerted on ${new Date(token.first_alert_at).toISOString()}`;
+  }
+  // The alert history is the durable record, and deliberately outlives the token table:
+  // discovery is now chain-driven and the token registry can be rebuilt from scratch, but
+  // "we already pinged this" must survive that or the rebuild re-alerts everything the
+  // owner has already seen.
+  const prior = deps.outcomeRepo.findByAddress(token.address);
+  if (prior) {
+    return `already alerted on ${new Date(prior.first_alerted_at).toISOString()} (from alert history)`;
   }
   return null;
 }
@@ -758,6 +766,8 @@ export interface PollerDeps {
   dexScreenerChainId: string;
   discoveryChunkBlocks: number;
   discoveryMaxLaunchesPerCycle: number;
+  /** Cold-start lookback for factory discovery, in blocks. */
+  discoveryColdStartLookbackBlocks: number;
   discoveryMinLiquidityUsd: number;
   spamDeployerThreshold: number;
   unindexedRecheckHours: number;
@@ -795,6 +805,9 @@ export interface PollerDeps {
   robinhoodRpcUrl: string;
   /** Chunks of ~600 blocks the swap scan may cover per fast cycle. */
   swapScanMaxChunksPerCycle: number;
+  /** Hours of chain activity that make a coin worth scanning. 0 restores polling the whole
+   * registry, which is the behaviour this replaced. */
+  eventDrivenWindowHours: number;
   /** Pools already resolved to nothing we track, so they are not re-resolved every cycle.
    * Process-lifetime only; losing it on restart just repeats cheap work once. */
   resolvedPoolCache: Set<string>;
@@ -860,7 +873,7 @@ async function checkAndSendMarketCapTierAlert(
     if (token.last_block_at != null && now - token.last_block_at < GATE_RECHECK_INTERVAL_MS) return;
     snapshot = await fetchSnapshotForToken(deps, token);
   }
-  const blockReason = alreadyPingedBlockReason(token) ?? entryAlertBlockReason(marketCapUsd, snapshot, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
+  const blockReason = alreadyPingedBlockReason(deps, token) ?? entryAlertBlockReason(marketCapUsd, snapshot, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
   if (blockReason) {
     // Transient conditions (market cap not resolved yet, links not indexed yet, a
     // zero-sell hour) — deliberately do NOT consume the tier index or capture an entry
@@ -1223,7 +1236,7 @@ async function handleDeadToken(deps: PollerDeps, token: TokenRow, current: Retur
   // stamp: `last_alert_at` also drives isInCooldown, so stamping it on every blocked cycle
   // held the token in a rolling 6h cooldown that outlived the block itself and silently
   // suppressed the alert long after the coin qualified again.
-  const gateReason = alreadyPingedBlockReason(token) ?? entryAlertBlockReason(resolveMarketCapUsd(current), current, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
+  const gateReason = alreadyPingedBlockReason(deps, token) ?? entryAlertBlockReason(resolveMarketCapUsd(current), current, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
   if (gateReason) {
     recordGateBlock(deps, token, "revival", gateReason);
     tokenRepo.setRevivalConfirmCount(token.address, next);
@@ -1362,7 +1375,7 @@ async function handleBreakoutCandidate(
 
   const gateReason =
     untrustworthyMarketCapReason(deps, resolveMarketCapUsd(current), current.liquidityUsd) ??
-    alreadyPingedBlockReason(token) ?? entryAlertBlockReason(
+    alreadyPingedBlockReason(deps, token) ?? entryAlertBlockReason(
       resolveMarketCapUsd(current),
       current,
       alertAgeMinutes(token, now)
@@ -1618,7 +1631,7 @@ export async function runGraduationSweep(deps: PollerDeps, now: number): Promise
     if (isMarketCapTrustworthy(marketCapUsd, snap?.liquidityUsd ?? null, deps.minLiquidityToMcapPct)) {
       tokenRepo.updateAthMarketCap(token.address, marketCapUsd!);
     }
-    const blockReason = alreadyPingedBlockReason(token) ?? entryAlertBlockReason(marketCapUsd, snap, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
+    const blockReason = alreadyPingedBlockReason(deps, token) ?? entryAlertBlockReason(marketCapUsd, snap, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
     if (blockReason) {
       recordGateBlock(deps, token, "graduation", blockReason);
       continue;
@@ -1772,7 +1785,7 @@ export async function runUngraduatedFastSweep(deps: PollerDeps, now: number): Pr
       // silently and permanently dropped for the majority of tokens.
       const snap = await fetchSnapshotForToken(deps, token);
       const resolvedMcap = resolveMarketCapUsd(snap, onChainMcap);
-      const blockReason = alreadyPingedBlockReason(token) ?? entryAlertBlockReason(resolvedMcap, snap, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
+      const blockReason = alreadyPingedBlockReason(deps, token) ?? entryAlertBlockReason(resolvedMcap, snap, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
       if (blockReason) {
         recordGateBlock(deps, token, "graduation", blockReason);
         continue;
@@ -1971,7 +1984,7 @@ export async function runMomentumFastSweep(deps: PollerDeps, now: number): Promi
     // Momentum now describes an established coin being suddenly bid, not a new pair in its
     // first hour, so it takes the established ceiling rather than the launch cap.
     const gateReason =
-      alreadyPingedBlockReason(token) ?? entryAlertBlockReason(
+      alreadyPingedBlockReason(deps, token) ?? entryAlertBlockReason(
         current.marketCapUsd,
         current,
         alertAgeMinutes(token, now)
@@ -2163,6 +2176,7 @@ export async function runFastCycle(deps: PollerDeps): Promise<void> {
         dexScreenerChainId,
         chunkBlocks: deps.discoveryChunkBlocks,
         maxLaunchesPerCycle: deps.discoveryMaxLaunchesPerCycle,
+        coldStartLookbackBlocks: deps.discoveryColdStartLookbackBlocks,
         minLiquidityUsd: deps.discoveryMinLiquidityUsd,
         spamDeployerThreshold: deps.spamDeployerThreshold,
         identityBatchSize: deps.graduationCheckBatchSize,
@@ -2310,6 +2324,7 @@ export async function runPollCycle(deps: PollerDeps): Promise<void> {
         dexScreenerChainId,
         chunkBlocks: deps.discoveryChunkBlocks,
         maxLaunchesPerCycle: deps.discoveryMaxLaunchesPerCycle,
+        coldStartLookbackBlocks: deps.discoveryColdStartLookbackBlocks,
         minLiquidityUsd: deps.discoveryMinLiquidityUsd,
         spamDeployerThreshold: deps.spamDeployerThreshold,
         identityBatchSize: deps.graduationCheckBatchSize,
@@ -2333,7 +2348,10 @@ export async function runPollCycle(deps: PollerDeps): Promise<void> {
     deps.marketScanBatchSize,
     focused.length === 1 ? focused : undefined,
     deps.ponsLaunchpadOnly,
-    deps.ponsFactoryFilter
+    deps.ponsFactoryFilter,
+    // Event-driven: only coins the chain has shown activity for. The swap scan reports who
+    // is being bought and the factory scan what just launched; nothing else needs polling.
+    deps.eventDrivenWindowHours > 0 ? Date.now() - deps.eventDrivenWindowHours * 3600_000 : null
   );
   logHeap(deps, "after-load-tracked", { tracked: tracked.length });
   if (tracked.length === 0) {

@@ -21,6 +21,8 @@ export interface DiscoveryDeps {
   /** Max launches one discovery pass may accumulate before deferring the rest to the next
    * cycle. Bounds peak memory during a catch-up after downtime. */
   maxLaunchesPerCycle: number;
+  /** How far back a cold start reaches when a factory has no cursor. */
+  coldStartLookbackBlocks: number;
   minLiquidityUsd: number;
   spamDeployerThreshold: number;
   /** Batch size for the on-chain name()/symbol() fallback multicall (reuses the same
@@ -54,6 +56,7 @@ export async function runDiscovery(deps: DiscoveryDeps, factories: FactoryConfig
     dexScreenerChainId,
     chunkBlocks,
     maxLaunchesPerCycle,
+    coldStartLookbackBlocks,
     minLiquidityUsd,
     spamDeployerThreshold,
     identityBatchSize,
@@ -77,8 +80,17 @@ export async function runDiscovery(deps: DiscoveryDeps, factories: FactoryConfig
   // been safely looked up and inserted (see comment below the insertion loop for why).
   const pendingCursors = new Map<string, bigint>();
 
+  const head = await chainClient.getBlockNumber();
   for (const factory of factories) {
-    const cursor = discoveryStateRepo.getLastScannedBlock(factory.address) ?? factory.startBlock;
+    // With no cursor, start near the head rather than at the factory's deploy block.
+    //
+    // Those are ~44 million blocks apart, so a cold start (or a deliberate reset of the
+    // coin registry) would spend days replaying ancient launches before reaching today —
+    // during which nothing currently launching is seen at all. Recent history is what
+    // matters for a bot alerting on live moves; anything older is the backfill's problem.
+    const stored = discoveryStateRepo.getLastScannedBlock(factory.address);
+    const coldStart = head > BigInt(coldStartLookbackBlocks) ? head - BigInt(coldStartLookbackBlocks) : 0n;
+    const cursor = stored ?? (coldStart > factory.startBlock ? coldStart : factory.startBlock);
     const { launches, reachedBlock } = await scanTokenLaunches(
       chainClient,
       factory.address,

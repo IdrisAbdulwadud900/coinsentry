@@ -28,12 +28,15 @@ function baseDeps(db: Db, overrides: Partial<DiscoveryDeps> = {}): { deps: Disco
   const discoveryStateRepo = new DiscoveryStateRepo(db);
   const tokenRepo = new TokenRepo(db);
   const deps: DiscoveryDeps = {
-    chainClient: {} as unknown as ChainClient,
+    // runDiscovery reads the head to decide a cold-start cursor.
+    chainClient: { getBlockNumber: async () => 10_000_000n } as unknown as ChainClient,
     discoveryStateRepo,
     tokenRepo,
     dex: { lookupBatch: vi.fn(async () => []) } as unknown as DexScreenerClient,
     dexScreenerChainId: "robinhood",
     chunkBlocks: 500_000,
+    maxLaunchesPerCycle: 2_000,
+    coldStartLookbackBlocks: 2_000_000,
     minLiquidityUsd: 200,
     spamDeployerThreshold: 15,
     identityBatchSize: 300,

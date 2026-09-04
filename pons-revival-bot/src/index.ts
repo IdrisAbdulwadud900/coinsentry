@@ -123,6 +123,7 @@ async function main(): Promise<void> {
     dexScreenerChainId: config.ROBINHOOD_CHAIN_ID_DEXSCREENER,
     discoveryChunkBlocks: config.DISCOVERY_CHUNK_BLOCKS,
     discoveryMaxLaunchesPerCycle: config.DISCOVERY_MAX_LAUNCHES_PER_CYCLE,
+    discoveryColdStartLookbackBlocks: config.DISCOVERY_COLD_START_LOOKBACK_BLOCKS,
     discoveryMinLiquidityUsd: config.DISCOVERY_MIN_LIQUIDITY_USD,
     spamDeployerThreshold: config.SPAM_DEPLOYER_THRESHOLD,
     unindexedRecheckHours: config.UNINDEXED_RECHECK_HOURS,
@@ -151,6 +152,7 @@ async function main(): Promise<void> {
     ponsFactoryFilter: config.PONS_FACTORY_FILTER || null,
     robinhoodRpcUrl: config.ROBINHOOD_RPC_URL,
     swapScanMaxChunksPerCycle: config.SWAP_SCAN_MAX_CHUNKS_PER_CYCLE,
+    eventDrivenWindowHours: config.EVENT_DRIVEN_WINDOW_HOURS,
     resolvedPoolCache: new Set<string>(),
     poolChainConfigs: buildPoolChainConfigs({
       robinhood: config.ROBINHOOD_RPC_URL,

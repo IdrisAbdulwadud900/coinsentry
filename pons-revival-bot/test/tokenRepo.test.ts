@@ -503,3 +503,33 @@ describe("swap-activity bridge", () => {
     });
   });
 });
+
+describe("event-driven scanning", () => {
+  // Polling the whole registry made cost grow with how many dead coins had ever existed,
+  // and left a coin that started moving waiting behind them. The chain reports what is
+  // launching and what is being bought; nothing else needs looking at.
+  it("scans only coins the chain has shown activity for", () => {
+    const db = openDatabase(":memory:");
+    const repo = new TokenRepo(db);
+    const now = Date.now();
+    const DORMANT = "0xaa00000000000000000000000000000000000001";
+    const TRADING = "0xbb00000000000000000000000000000000000002";
+    const FRESH = "0xcc00000000000000000000000000000000000003";
+
+    repo.insertIfNew(DORMANT, "DEAD", "Dead", "0xp1", "active", null, null, now - 90 * 3600000);
+    repo.insertIfNew(TRADING, "HOT", "Hot", "0xp2", "active", null, null, now - 90 * 3600000);
+    repo.insertIfNew(FRESH, "NEW", "New", "0xp3", "active", null, null, now - 60000);
+    repo.markTraded(TRADING, now - 60000);
+
+    const since = now - 24 * 3600000;
+    const scanned = repo.listTrackableForCycle(50, undefined, false, null, since).map((t) => t.symbol).sort();
+
+    // A just-launched coin has no trade yet, so it qualifies on age — otherwise the
+    // new-pair half of the strategy would never be looked at.
+    expect(scanned).toEqual(["HOT", "NEW"]);
+
+    // With the window off, the old polling behaviour is restored.
+    const all = repo.listTrackableForCycle(50, undefined, false, null, null).map((t) => t.symbol).sort();
+    expect(all).toEqual(["DEAD", "HOT", "NEW"]);
+  });
+});

@@ -96,7 +96,23 @@ export class TokenRepo {
    * are re-checked every single cycle, giving the fastest possible revival detection),
    * then everything else round-robins oldest-checked-first so no token ever starves.
    */
-  listTrackableForCycle(limit: number, chains?: string[], ponsOnly = false, ponsFactory?: string | null): TokenRow[] {
+  listTrackableForCycle(
+    limit: number,
+    chains?: string[],
+    ponsOnly = false,
+    ponsFactory?: string | null,
+    /**
+     * Event-driven mode: only consider coins the chain has shown activity for since this
+     * timestamp, instead of round-robining the whole registry.
+     *
+     * Polling every stored coin is backwards — cost grows with how many dead coins have
+     * ever existed, and a coin that starts moving waits its turn behind them. The swap
+     * scan already reports who is being bought and the factory scan reports what just
+     * launched, so those two feeds decide what deserves a look. Anything the chain has not
+     * mentioned recently is, by definition, not doing anything.
+     */
+    activeSinceMs?: number | null
+  ): TokenRow[] {
     // Pons-only mode narrows the scan to coins that came from the two Pons launchpad
     // factories, ignoring everything discovered by watching DEX pools directly. Those DEX
     // scans pulled in the whole chain — 458,000 tokens against roughly 20,000 launchpad
@@ -109,6 +125,9 @@ export class TokenRepo {
       : ponsOnly
         ? " AND t.factory_address IS NOT NULL"
         : "";
+    // A freshly-launched coin has no trade yet, so first_seen_at counts as activity too —
+    // otherwise the new-pair half of the strategy would never be looked at.
+    const activityFilter = activeSinceMs != null ? " AND (t.last_traded_at > ? OR t.first_seen_at > ?)" : "";
     // Focus mode narrows the scan to one chain, which spends the whole per-cycle budget
     // there instead of spreading it — the same budget then revisits each of that chain's
     // coins far more often.
@@ -127,7 +146,7 @@ export class TokenRepo {
         .all(...chains, Date.now() - HOT_SET_WINDOW_MS, limit);
     }
     return this.db
-      .prepare<[number, number], TokenRow>(
+      .prepare<number[], TokenRow>(
         // Coins that have actually traded recently come first, read from an indexed column
         // on the row itself. The first version of this correlated a subquery against the
         // 2.4M-row snapshots table for every one of 57,000 tokens on every cycle, and the
@@ -140,13 +159,17 @@ export class TokenRepo {
         // scan that comes round every 40. The tail still round-robins oldest-first behind
         // the hot set, so nothing starves.
         `SELECT t.* FROM tokens t
-         WHERE t.status != 'unindexed'${ponsFilter}
+         WHERE t.status != 'unindexed'${ponsFilter}${activityFilter}
          ORDER BY (CASE WHEN t.last_traded_at > ? THEN 0 ELSE 1 END) ASC,
                   (CASE WHEN t.status IN ('dead', 'alerted') THEN 0 ELSE 1 END) ASC,
                   COALESCE(t.market_checked_at, 0) ASC
          LIMIT ?`
       )
-      .all(Date.now() - HOT_SET_WINDOW_MS, limit);
+      .all(
+        Date.now() - HOT_SET_WINDOW_MS,
+        ...(activeSinceMs != null ? [activeSinceMs, activeSinceMs] : []),
+        limit
+      );
   }
 
   /** Stamps a batch of tokens as market-checked, in one transaction (per-row autocommit
