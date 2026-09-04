@@ -84,24 +84,26 @@ const ConfigSchema = z.object({
   PONS_FACTORY_ACTIVE_START_BLOCK: z.coerce.number().int().nonnegative(),
   PONS_FACTORY_LEGACY: z.string().min(1),
   PONS_FACTORY_LEGACY_START_BLOCK: z.coerce.number().int().nonnegative(),
-  // The launchpad that is actually minting today.
-  //
-  // Both configured Pons factories emitted ZERO logs over 20,000 blocks while this contract
-  // emitted 1,292 (126 launches per 3,000 blocks), and every coin reported as missed traced
-  // back to it — including one that ran $15k to a $210k ATH. The bot had been watching a
-  // retired launchpad, which is why its discovery logs always read "launches: 0".
-  //
-  // Its event is not the one chainClient has an ABI for, so it is decoded by topic
-  // position, verified on-chain: topic1 is the token (confirmed by reading symbol() off
-  // it), topic2 a pool contract, topic3 the deployer EOA.
-  ACTIVE_LAUNCHPAD_ADDRESS: z
+  /**
+   * The launchpads actually minting, as `address|topic0|tokenTopicIndex` entries separated
+   * by commas. Optional 4th and 5th fields give the pool and deployer topic indexes.
+   *
+   * A list rather than one entry because this chain runs several at once, and the coins the
+   * owner reports as missed have come from a different one each time. Measured over 20,000
+   * blocks: 0x7ed598bc emits 821 launches, 0xdab26bb6 emits 47, while BOTH factories this
+   * bot originally shipped with emit zero — they are retired. A coin from an unwatched
+   * launchpad is never introduced to the registry at all, so it cannot be alerted on no
+   * matter how well every other part of the pipeline works.
+   *
+   * Each layout was verified on-chain by reading symbol() off the address in the token
+   * topic and confirming a real ERC20 came back, not assumed from the event name.
+   */
+  ACTIVE_LAUNCHPADS: z
     .string()
-    .regex(/^(0x[a-fA-F0-9]{40})?$/, "ACTIVE_LAUNCHPAD_ADDRESS must be a 0x address or empty")
-    .default("0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e"),
-  ACTIVE_LAUNCHPAD_TOPIC0: z
-    .string()
-    .regex(/^(0x[a-fA-F0-9]{64})?$/, "ACTIVE_LAUNCHPAD_TOPIC0 must be a 32-byte topic or empty")
-    .default("0x8d4aad4953d0ca700d468f3753aa14432d1b35b43ec6409f051fb6aa43a89607"),
+    .default(
+      "0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e|0x8d4aad4953d0ca700d468f3753aa14432d1b35b43ec6409f051fb6aa43a89607|1|2|3," +
+        "0xdab26bb66f29863f2d68ced54f65cc614c4e65dc|0x8aa5d65868d43c207781ea83c30847c2ef67f7ccfa3c023bcd317beeedc9be3f|1"
+    ),
   ACTIVE_LAUNCHPAD_START_BLOCK: z.coerce.number().int().nonnegative().default(0),
   DISCOVERY_CHUNK_BLOCKS: z.coerce.number().int().positive().default(500_000),
   // Launches one discovery pass may hold before deferring the rest to the next cycle. The

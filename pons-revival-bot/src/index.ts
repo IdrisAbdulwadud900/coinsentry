@@ -82,19 +82,25 @@ async function main(): Promise<void> {
     { address: config.PONS_FACTORY_ACTIVE, startBlock: BigInt(config.PONS_FACTORY_ACTIVE_START_BLOCK) },
     { address: config.PONS_FACTORY_LEGACY, startBlock: BigInt(config.PONS_FACTORY_LEGACY_START_BLOCK) },
   ];
-  // The launchpad currently minting. Both of the above are dormant (zero logs over 20,000
-  // blocks); this one produces ~126 launches per 3,000 blocks and is where every missed
-  // coin came from. Decoded by topic position — see ACTIVE_LAUNCHPAD_ADDRESS in config.
-  if (config.ACTIVE_LAUNCHPAD_ADDRESS && config.ACTIVE_LAUNCHPAD_TOPIC0) {
+  // The launchpads currently minting. Both factories above are dormant (zero logs over
+  // 20,000 blocks) — every coin reported as missed came from one of these instead, and
+  // from a different one each time, which is why this is a list. See ACTIVE_LAUNCHPADS.
+  for (const entry of config.ACTIVE_LAUNCHPADS.split(",").map((e) => e.trim()).filter(Boolean)) {
+    const [address, topic0, tokenIdx, poolIdx, deployerIdx] = entry.split("|").map((f) => f.trim());
+    if (!address || !topic0) {
+      logger.warn({ entry }, "Skipping malformed ACTIVE_LAUNCHPADS entry");
+      continue;
+    }
     factories.push({
-      address: config.ACTIVE_LAUNCHPAD_ADDRESS,
+      address,
       startBlock: BigInt(config.ACTIVE_LAUNCHPAD_START_BLOCK),
-      launchTopic0: config.ACTIVE_LAUNCHPAD_TOPIC0,
-      tokenTopicIndex: 1,
-      poolTopicIndex: 2,
-      deployerTopicIndex: 3,
+      launchTopic0: topic0,
+      tokenTopicIndex: tokenIdx ? Number(tokenIdx) : 1,
+      poolTopicIndex: poolIdx ? Number(poolIdx) : null,
+      deployerTopicIndex: deployerIdx ? Number(deployerIdx) : null,
     });
   }
+  logger.info({ factories: factories.length }, "Configured launch sources");
 
   const classifierConfig = buildClassifierConfig(
     {
