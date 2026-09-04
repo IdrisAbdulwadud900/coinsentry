@@ -1,6 +1,6 @@
 import type { Logger } from "pino";
 import type { ChainClient } from "./chainClient.js";
-import { scanTokenLaunches, readTokenIdentities } from "./chainClient.js";
+import { scanTokenLaunches, scanLaunchesByTopic, readTokenIdentities } from "./chainClient.js";
 import type { DiscoveryStateRepo } from "./discoveryStateRepo.js";
 import type { TokenRepo } from "./tokenRepo.js";
 import type { DexScreenerClient } from "./dexscreener.js";
@@ -9,6 +9,13 @@ import { indexPairsByToken, pickCanonicalPair } from "./dexscreener.js";
 export interface FactoryConfig {
   address: string;
   startBlock: bigint;
+  /** Set for launchpads decoded by raw topic rather than this file's built-in ABI. See
+   * scanLaunchesByTopic: the original launchpad went dormant and its replacement emits a
+   * different event, so the token address is read by topic position instead. */
+  launchTopic0?: string;
+  tokenTopicIndex?: number;
+  poolTopicIndex?: number | null;
+  deployerTopicIndex?: number | null;
 }
 
 export interface DiscoveryDeps {
@@ -91,14 +98,27 @@ export async function runDiscovery(deps: DiscoveryDeps, factories: FactoryConfig
     const stored = discoveryStateRepo.getLastScannedBlock(factory.address);
     const coldStart = head > BigInt(coldStartLookbackBlocks) ? head - BigInt(coldStartLookbackBlocks) : 0n;
     const cursor = stored ?? (coldStart > factory.startBlock ? coldStart : factory.startBlock);
-    const { launches, reachedBlock } = await scanTokenLaunches(
-      chainClient,
-      factory.address,
-      cursor,
-      chunkBlocks,
-      logger,
-      maxLaunchesPerCycle
-    );
+    const { launches, reachedBlock } = factory.launchTopic0
+      ? await scanLaunchesByTopic(
+          chainClient,
+          factory.address,
+          factory.launchTopic0,
+          factory.tokenTopicIndex ?? 1,
+          factory.poolTopicIndex ?? null,
+          factory.deployerTopicIndex ?? null,
+          cursor,
+          chunkBlocks,
+          maxLaunchesPerCycle,
+          logger
+        )
+      : await scanTokenLaunches(
+          chainClient,
+          factory.address,
+          cursor,
+          chunkBlocks,
+          logger,
+          maxLaunchesPerCycle
+        );
 
     for (const launch of launches) {
       newlyDiscovered.set(launch.tokenAddress.toLowerCase(), {

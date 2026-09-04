@@ -174,6 +174,73 @@ async function getLogsBisecting(
  * addresses plus the block number the scan reached, so callers can persist a
  * resumable cursor.
  */
+/**
+ * Reads launch events from a launchpad by raw topic, with no ABI.
+ *
+ * The launchpad this bot was built against went dormant — the configured factory emitted
+ * zero logs over 20,000 blocks while another contract emitted 1,292, and every coin the
+ * owner reported as missed came from that other one. Its event is not the one this file
+ * has an ABI for, and the token address sits in an indexed topic, so decoding by position
+ * is both sufficient and robust: it needs no knowledge of the event's name or its data
+ * layout, which means a launchpad can be swapped in from config alone.
+ */
+export async function scanLaunchesByTopic(
+  client: ChainClient,
+  factoryAddress: string,
+  topic0: string,
+  tokenTopicIndex: number,
+  poolTopicIndex: number | null,
+  deployerTopicIndex: number | null,
+  fromBlock: bigint,
+  chunkSize: number,
+  maxLaunches: number,
+  logger: Logger
+): Promise<{ launches: TokenLaunchedLog[]; reachedBlock: bigint }> {
+  const head = await client.getBlockNumber();
+  const launches: TokenLaunchedLog[] = [];
+  if (fromBlock > head) return { launches, reachedBlock: head };
+
+  const addressFromTopic = (topic: string | undefined): string | null =>
+    topic && topic.length >= 42 ? `0x${topic.slice(-40)}` : null;
+
+  let cursor = fromBlock;
+  const chunk = BigInt(chunkSize);
+  while (cursor <= head) {
+    const toBlock = cursor + chunk - 1n > head ? head : cursor + chunk - 1n;
+    try {
+      const logs = await client.getLogs({
+        address: factoryAddress as `0x${string}`,
+        fromBlock: cursor,
+        toBlock,
+      });
+      for (const log of logs as unknown as { topics: string[]; blockNumber: bigint }[]) {
+        if (log.topics[0]?.toLowerCase() !== topic0.toLowerCase()) continue;
+        const tokenAddress = addressFromTopic(log.topics[tokenTopicIndex]);
+        if (!tokenAddress) continue;
+        launches.push({
+          tokenAddress,
+          deployerAddress: deployerTopicIndex != null ? addressFromTopic(log.topics[deployerTopicIndex]) : null,
+          poolAddress: poolTopicIndex != null ? addressFromTopic(log.topics[poolTopicIndex]) : null,
+          pairTokenAddress: null,
+          blockNumber: log.blockNumber ?? cursor,
+        });
+      }
+      if (launches.length >= maxLaunches) {
+        logger.warn({ factoryAddress, found: launches.length }, "Topic launch scan hit its cap, resuming next cycle");
+        return { launches, reachedBlock: toBlock };
+      }
+    } catch (err) {
+      logger.error(
+        { factoryAddress, fromBlock: cursor.toString(), toBlock: toBlock.toString(), err: String(err) },
+        "Topic launch scan chunk failed, stopping for this cycle"
+      );
+      return { launches, reachedBlock: cursor - 1n < fromBlock ? fromBlock - 1n : cursor - 1n };
+    }
+    cursor = toBlock + 1n;
+  }
+  return { launches, reachedBlock: head };
+}
+
 export async function scanTokenLaunches(
   client: ChainClient,
   factoryAddress: string,

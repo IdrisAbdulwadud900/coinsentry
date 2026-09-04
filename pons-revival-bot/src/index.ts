@@ -82,6 +82,19 @@ async function main(): Promise<void> {
     { address: config.PONS_FACTORY_ACTIVE, startBlock: BigInt(config.PONS_FACTORY_ACTIVE_START_BLOCK) },
     { address: config.PONS_FACTORY_LEGACY, startBlock: BigInt(config.PONS_FACTORY_LEGACY_START_BLOCK) },
   ];
+  // The launchpad currently minting. Both of the above are dormant (zero logs over 20,000
+  // blocks); this one produces ~126 launches per 3,000 blocks and is where every missed
+  // coin came from. Decoded by topic position — see ACTIVE_LAUNCHPAD_ADDRESS in config.
+  if (config.ACTIVE_LAUNCHPAD_ADDRESS && config.ACTIVE_LAUNCHPAD_TOPIC0) {
+    factories.push({
+      address: config.ACTIVE_LAUNCHPAD_ADDRESS,
+      startBlock: BigInt(config.ACTIVE_LAUNCHPAD_START_BLOCK),
+      launchTopic0: config.ACTIVE_LAUNCHPAD_TOPIC0,
+      tokenTopicIndex: 1,
+      poolTopicIndex: 2,
+      deployerTopicIndex: 3,
+    });
+  }
 
   const classifierConfig = buildClassifierConfig(
     {
