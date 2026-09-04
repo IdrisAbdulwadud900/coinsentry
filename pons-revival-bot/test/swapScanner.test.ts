@@ -1,11 +1,17 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import pino from "pino";
-import { scanRecentSwaps, V3_SWAP_TOPIC, SWAP_SCAN_CHUNK_BLOCKS } from "../src/data/swapScanner.js";
+import { scanRecentSwaps, V3_SWAP_TOPIC, V4_SWAP_TOPIC, SWAP_SCAN_CHUNK_BLOCKS } from "../src/data/swapScanner.js";
 
 const logger = pino({ level: "silent" });
 
+/** A V3 swap log: the pool is the emitting contract. */
+const v3 = (address: string) => ({ address, topics: [V3_SWAP_TOPIC] });
+/** A V4 swap log: every pool shares the PoolManager address, so the pool is the id in
+ * topic 1 — the same 32-byte value DexScreener reports as a v4 coin's pair. */
+const v4 = (poolId: string) => ({ address: "0xPoolManager", topics: [V4_SWAP_TOPIC, poolId] });
+
 /** Serves a block head, then swap logs per getLogs call from a queue. */
-function stubRpc(head: number, logsPerCall: { address: string }[][]) {
+function stubRpc(head: number, logsPerCall: { address: string; topics?: string[] }[][]) {
   const calls: { fromBlock: string; toBlock: string; topics: string[] }[] = [];
   let i = 0;
   vi.stubGlobal(
@@ -27,7 +33,7 @@ describe("scanRecentSwaps", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("returns the distinct pools that traded, deduplicated across many swaps", async () => {
-    stubRpc(1000, [[{ address: "0xAAA" }, { address: "0xaaa" }, { address: "0xBBB" }]]);
+    stubRpc(1000, [[v3("0xAAA"), v3("0xaaa"), v3("0xBBB")]]);
 
     const { pools } = await scanRecentSwaps("http://rpc", 900n, 1, logger);
 
@@ -41,10 +47,22 @@ describe("scanRecentSwaps", () => {
     await scanRecentSwaps("http://rpc", 1n, 3, logger);
 
     expect(calls).toHaveLength(3);
-    expect(calls[0]?.topics).toEqual([V3_SWAP_TOPIC]);
+    expect(calls[0]?.topics).toEqual([[V3_SWAP_TOPIC, V4_SWAP_TOPIC]]);
     // Chunks must stay under the RPC's 10,000-log ceiling; contiguous, no gaps.
     expect(BigInt(calls[0]!.toBlock) - BigInt(calls[0]!.fromBlock) + 1n).toBe(BigInt(SWAP_SCAN_CHUNK_BLOCKS));
     expect(BigInt(calls[1]!.fromBlock)).toBe(BigInt(calls[0]!.toBlock) + 1n);
+  });
+
+  it("identifies a V4 pool by its id, not the shared PoolManager address", async () => {
+    const POOL = "0x4dd2736e0a2c4dde3fdfaecc1cf625ec01832cddbde8995b95dd86521d60e734";
+    stubRpc(1000, [[v4(POOL), v4(POOL), v3("0xV3POOL")]]);
+
+    const { pools } = await scanRecentSwaps("http://rpc", 900n, 1, logger);
+
+    // Using log.address for a V4 swap would collapse every V4 coin on the chain into one
+    // "pool" and identify none of them.
+    expect([...pools].sort()).toEqual([POOL, "0xv3pool"].sort());
+    expect(pools.has("0xpoolmanager")).toBe(false);
   });
 
   it("never scans past the chain head", async () => {
@@ -68,7 +86,7 @@ describe("scanRecentSwaps", () => {
         }
         call += 1;
         if (call === 2) return new Response(JSON.stringify({ error: { message: "limit exceeded" } }), { status: 200 });
-        return new Response(JSON.stringify({ result: [{ address: "0xAAA" }] }), { status: 200 });
+        return new Response(JSON.stringify({ result: [{ address: "0xAAA", topics: [V3_SWAP_TOPIC] }] }), { status: 200 });
       })
     );
 

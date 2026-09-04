@@ -91,10 +91,14 @@ const ConfigSchema = z.object({
   // objects and the process died on its heap limit every cycle. See scanTokenLaunches.
   DISCOVERY_MAX_LAUNCHES_PER_CYCLE: z.coerce.number().int().positive().default(2_000),
   // How far back factory discovery reaches when it has no cursor. The factories deployed
-  // ~44M blocks below the current head, so starting there on a cold start means days of
-  // replaying ancient launches before anything currently launching is seen. 2M blocks is
-  // ~2.3 days at ~101ms, which covers everything recent enough to still move.
-  DISCOVERY_COLD_START_LOOKBACK_BLOCKS: z.coerce.number().int().positive().default(2_000_000),
+  // ~44M blocks below the current head, so starting there on a cold start would spend days
+  // replaying ancient launches before seeing anything currently launching.
+  //
+  // 8M blocks is ~9.3 days. The first attempt at 2M (~2.3 days) proved too shallow: a coin
+  // launched 5.2 days before the registry rebuild was never discovered at all, because the
+  // launch event that would have introduced it fell outside the window — and a coin the
+  // registry never learns about cannot be alerted on no matter how hard it is later bought.
+  DISCOVERY_COLD_START_LOOKBACK_BLOCKS: z.coerce.number().int().positive().default(8_000_000),
   // Watch the chain's DEX pool factories directly, not just the Pons launchpad. Most
   // Robinhood tokens are launched straight onto a DEX and never touch Pons, so without
   // this they were completely invisible (see src/data/dexPoolDiscovery.ts).

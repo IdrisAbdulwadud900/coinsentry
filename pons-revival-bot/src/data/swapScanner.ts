@@ -5,12 +5,22 @@ import type { Logger } from "pino";
 export const V3_SWAP_TOPIC = "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67";
 
 /**
- * Blocks per getLogs call. The RPC refuses any query matching more than 10,000 logs, and
- * measured chain-wide swap density is ~3,841 logs per 600 blocks, so 600 sits at roughly
- * 38% of the cap with headroom for busier periods. 600 blocks is also ~1 minute of chain
- * at Robinhood's ~101ms blocks.
+ * Uniswap V4 `Swap`, emitted by the singleton PoolManager rather than by a pool contract.
+ *
+ * Watching only V3 made the larger half of the chain invisible: measured over the same 600
+ * blocks, V4 produced 5,424 swaps against V3's 3,841. A coin trading on V4 — which
+ * DexScreener labels "v4" and identifies by a 32-byte pool id rather than a contract
+ * address — could be bought hundreds of times an hour without this scan noticing.
  */
-export const SWAP_SCAN_CHUNK_BLOCKS = 600;
+export const V4_SWAP_TOPIC = "0x40e9cecb9f5f1f1c5b9c97dec2917b7ee92e57ba5563708daca94dd84ad7112f";
+
+/**
+ * Blocks per getLogs call. The RPC refuses any query matching more than 10,000 logs.
+ * Measured density is ~3,841 V3 swaps and ~5,424 V4 swaps per 600 blocks; scanning both
+ * venues together would sit at ~9,265, right against the ceiling. 300 blocks halves that
+ * to a comfortable ~4,600 and is still ~30 seconds of chain at Robinhood's ~101ms blocks.
+ */
+export const SWAP_SCAN_CHUNK_BLOCKS = 300;
 
 export interface SwapScanResult {
   /** Lower-cased pool addresses that saw at least one swap in the scanned range. */
@@ -66,10 +76,19 @@ export async function scanRecentSwaps(
         {
           fromBlock: `0x${cursor.toString(16)}`,
           toBlock: `0x${toBlock.toString(16)}`,
-          topics: [V3_SWAP_TOPIC],
+          // Either venue's swap event; getLogs treats a nested array as OR.
+          topics: [[V3_SWAP_TOPIC, V4_SWAP_TOPIC]],
         },
-      ])) as { address: string }[];
-      for (const log of logs) pools.add(log.address.toLowerCase());
+      ])) as { address: string; topics: string[] }[];
+      for (const log of logs) {
+        // V3 pools are contracts, so the log's address IS the pool. V4 routes every pool
+        // through one PoolManager, so the address is useless and the pool is the 32-byte
+        // id in topic 1 — which is exactly what DexScreener reports as the pair for a v4
+        // coin, so both forms match the same stored column.
+        const isV4 = log.topics[0]?.toLowerCase() === V4_SWAP_TOPIC;
+        const pool = isV4 ? log.topics[1] : log.address;
+        if (pool) pools.add(pool.toLowerCase());
+      }
       reached = toBlock;
     } catch (err) {
       // Stop at the last good block so the cursor retries this range rather than skipping
