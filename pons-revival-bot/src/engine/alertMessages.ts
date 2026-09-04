@@ -286,9 +286,31 @@ function frag(icon: string, value: string, label?: string): string {
 }
 
 /** Grey subheader carrying chain and age — context, not a headline metric. */
+/**
+ * Chain badge plus how old the coin is.
+ *
+ * Age is derived from first_seen_at whenever the caller does not supply its own phrasing,
+ * so every alert carries it. Only three of the nine builders passed one explicitly, which
+ * left tier, graduation, milestone and dump alerts showing no age at all — and age is the
+ * first thing that separates a fresh launch from a coin that has been grinding for days,
+ * which changes how the same numbers should be read.
+ *
+ * Callers that pass ageText keep it: "dead 3d" and "45m old" say more in context than a
+ * bare duration would.
+ */
 function subHeader(token: TokenRow, ageText?: string): string | undefined {
-  const parts = [token.chain ? chainBadge(token.chain) : undefined, ageText].filter(Boolean);
+  const derived = ageText ?? formatTokenAge(token);
+  const parts = [token.chain ? chainBadge(token.chain) : undefined, derived].filter(Boolean);
   return parts.length > 0 ? `<i>${parts.join(" · ")}</i>` : undefined;
+}
+
+/** "3h old" / "2d old" from the coin's first-seen time, or undefined when unknown — an
+ * invented age is worse than none. */
+function formatTokenAge(token: TokenRow): string | undefined {
+  if (!token.first_seen_at) return undefined;
+  const hours = (Date.now() - token.first_seen_at) / 3_600_000;
+  if (hours < 0) return undefined;
+  return `${formatDuration(hours)} old`;
 }
 
 /**

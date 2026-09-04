@@ -733,3 +733,33 @@ describe("first-alerted timestamp", () => {
     expect(html).toContain(" UTC</b>");
   });
 });
+
+describe("coin age on every alert", () => {
+  // Only three of the nine builders passed an age explicitly, so tier, graduation,
+  // milestone and dump alerts showed none. Age is the first thing that separates a fresh
+  // launch from a coin grinding for days, which changes how the same numbers read.
+  it("derives the age from first_seen_at when the builder passes none", () => {
+    const token = { ...fakeToken(), first_seen_at: Date.now() - 3 * 60 * 60 * 1000 };
+
+    const html = buildPerformanceMilestoneAlertHtml(token, [10], 50_000, "robinhood", "0xpair");
+
+    expect(html).toContain("3.0h old");
+  });
+
+  it("keeps a builder's own phrasing when it supplies one", () => {
+    const token = { ...fakeToken(), first_seen_at: Date.now() - 90 * 60 * 60 * 1000 };
+
+    // "dead 3d" says more in context than a bare age would.
+    const html = buildRevivalAlertHtml(token, fakeSnapshot(), baseline, 72, "robinhood");
+
+    expect(html).toContain("dead 3d");
+  });
+
+  it("omits age rather than inventing one when first_seen_at is unknown", () => {
+    const token = { ...fakeToken(), first_seen_at: 0 };
+
+    const html = buildPerformanceMilestoneAlertHtml(token, [10], 50_000, "robinhood", "0xpair");
+
+    expect(html).not.toContain("old");
+  });
+});
