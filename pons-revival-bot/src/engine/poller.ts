@@ -2095,9 +2095,26 @@ async function runSwapActivityScan(deps: PollerDeps, now: number): Promise<void>
   // Resolving them on-chain and writing the pool back makes every future scan match
   // instantly. Pools that resolve to nothing we track are remembered so the work is done
   // once per pool rather than every cycle.
-  const unknown = [...pools].filter((p) => !knownPools.has(p) && !deps.resolvedPoolCache.has(p));
+  const unknown = [...pools].filter(
+    (p) =>
+      !knownPools.has(p) &&
+      !deps.resolvedPoolCache.has(p) &&
+      // Only V3-style pools can be resolved this way: they are contracts with token0()/
+      // token1(). A V4 "pool" is a 32-byte id, not an address, and passing those into the
+      // multicall poisoned every batch — 266-304 pools in, zero resolved out, with no error
+      // because allowFailure turns a malformed call into a per-call failure rather than a
+      // throw. V4 coins are still matched directly by pool id against the stored pair.
+      p.length === 42
+  );
   if (unknown.length > 0) {
-    const resolved = await readPoolTokens(deps.chainClient, unknown.slice(0, 150), 50, logger);
+    // 500, not 150: a pass sees ~500 traded pools of which only ~15 match a stored pool, so
+    // a low cap left most of the unknowns unresolved each time and a coin could trade for
+    // hours before its pool was learned. CATSTRO (0x6f81f30c) is the case — 46 days old,
+    // 613 buys an hour, and unmatchable because 452,022 of 453,962 unindexed coins have no
+    // pool recorded. Resolution is multicall in batches of 50, so this is ~10 calls.
+    const resolved = await readPoolTokens(deps.chainClient, unknown.slice(0, 500), 15, logger);
+    logger.info({ unknownPools: unknown.length, resolvedPools: resolved.size }, "Pool resolution pass");
+    let learnedCount = 0;
     for (const [pool, { token0, token1 }] of resolved) {
       let learned = false;
       for (const candidate of [token0, token1]) {
@@ -2109,6 +2126,17 @@ async function runSwapActivityScan(deps: PollerDeps, now: number): Promise<void>
         learned = true;
       }
       if (!learned) deps.resolvedPoolCache.add(pool);
+      else learnedCount += 1;
+    }
+    // Bounded and periodically emptied. A pool that resolved to nothing tracked is not
+    // permanently uninteresting — discovery may register its token minutes later, and a
+    // permanent negative cache would then hide that coin for the life of the process.
+    if (deps.resolvedPoolCache.size > 20_000) {
+      deps.resolvedPoolCache.clear();
+      logger.info("Cleared resolved-pool cache so newly-registered tokens get re-checked");
+    }
+    if (learnedCount > 0) {
+      logger.info({ learnedCount }, "Learned pool mappings from live trading");
     }
   }
 

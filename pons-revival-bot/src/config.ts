@@ -188,7 +188,18 @@ const ConfigSchema = z.object({
   // from the token's own pool) when computing early-buy-concentration ("bundle %").
   EARLY_BUY_WINDOW_BLOCKS: z.coerce.number().int().positive().default(500),
   SPAM_DEPLOYER_THRESHOLD: z.coerce.number().int().positive().default(15),
-  UNINDEXED_RECHECK_HOURS: z.coerce.number().positive().default(24),
+  // How long before an unindexed coin is looked at again.
+  //
+  // 24h was far longer than the sweep's actual capacity and it cost real coins: CATSTRO
+  // (0x6f81f30c) was checked while dead, woke up 46 days after launch to 613 buys and
+  // $121k of hourly volume, and was invisible the whole time because its next look was up
+  // to a day away. The swap feed cannot rescue that case either — 452,022 of 453,962
+  // unindexed coins have no pool recorded, so their swaps cannot be matched back to them.
+  //
+  // Capacity says 3h is comfortable: 8,000 rows per cycle at 5-minute cycles is ~96,000
+  // an hour, so all ~454,000 unindexed coins are revisited about every 4.7 hours anyway.
+  // A 24-hour gate was simply excluding coins the sweep had the budget to check.
+  UNINDEXED_RECHECK_HOURS: z.coerce.number().positive().default(3),
   // Max graduationStatus() calls aggregated into a single multicall3 RPC request.
   // 300 is a conservative default kept well under typical eth_call response-size
   // limits; it hasn't been empirically pushed to this RPC's actual ceiling the way

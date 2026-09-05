@@ -392,14 +392,23 @@ export async function readPoolTokens(
     ]);
     try {
       const results = await client.multicall({ contracts, allowFailure: true });
+      let succeeded = 0;
       for (let j = 0; j < batch.length; j += 1) {
         const t0 = results[j * 2];
         const t1 = results[j * 2 + 1];
         if (t0?.status !== "success" || t1?.status !== "success") continue;
+        succeeded += 1;
         out.set(batch[j]!.toLowerCase(), {
           token0: String(t0.result).toLowerCase(),
           token1: String(t1.result).toLowerCase(),
         });
+      }
+      // allowFailure means an oversized multicall comes back as per-call failures rather
+      // than an exception, so a batch that resolves nothing at all looks identical to one
+      // where every pool was genuinely unreadable. That silence hid a real fault: batches
+      // of 50 pools (100 calls) returned zero results while a single pool resolved fine.
+      if (succeeded === 0 && batch.length > 1) {
+        logger.warn({ batchSize: batch.length }, "Pool token batch resolved nothing — batch likely too large");
       }
     } catch (err) {
       logger.warn({ err: String(err), batch: batch.length }, "Pool token resolution batch failed, skipping");
