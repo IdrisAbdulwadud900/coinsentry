@@ -2209,3 +2209,54 @@ describe("never pings the same coin twice", () => {
     expect(sendAlert).not.toHaveBeenCalled();
   });
 });
+
+describe("honeypot detection", () => {
+  let db: Db;
+  beforeEach(() => {
+    db = openDatabase(":memory:");
+  });
+
+  async function attempt(buys: number, sells: number | null) {
+    const now = Date.now();
+    const sendAlert = vi.fn(async () => {});
+    const pair = {
+      chainId: "robinhood",
+      dexId: "test",
+      pairAddress: "0xpairAAA",
+      baseToken: { address: "0xAAA", symbol: "FOO", name: "Foo Token" },
+      liquidity: { usd: 5000 },
+      volume: { m5: 5000 },
+      marketCap: 8000,
+      txns: { m5: { buys: 20 }, h1: sells == null ? { buys } : { buys, sells } },
+      info: { websites: [{ url: "https://x.example" }] },
+    };
+    const { deps, tokenRepo } = baseDeps(db, {
+      dex: { lookupBatch: vi.fn(async () => [pair]) } as unknown as DexScreenerClient,
+      notifier: { sendAlert } as unknown as Notifier,
+      dryRunAlerts: false,
+    });
+    tokenRepo.insertIfNew("0xAAA", "FOO", "Foo", "0xpairAAA", "active", null, "0xFactory1", ALERTABLE_AGE(now));
+    await runMomentumFastSweep(deps, now);
+    return sendAlert;
+  }
+
+  it("blocks a coin where buyers cannot get out in proportion, not only at exactly zero sells", async () => {
+    // A honeypot that lets one wallet out reads as "sells: 1" and used to pass cleanly.
+    expect(await attempt(60, 1)).not.toHaveBeenCalled();
+  });
+
+  it("still blocks the outright zero-sells case", async () => {
+    expect(await attempt(20, 0)).not.toHaveBeenCalled();
+  });
+
+  it("allows a normally-traded coin where people are taking profit", async () => {
+    const sent = await attempt(60, 25);
+    expect(sent).toHaveBeenCalled();
+  });
+
+  it("never flags on unknown sell data, which is absence of evidence", async () => {
+    // Null sells means DexScreener did not report, not that nobody sold.
+    const sent = await attempt(60, null);
+    expect(sent).toHaveBeenCalled();
+  });
+});

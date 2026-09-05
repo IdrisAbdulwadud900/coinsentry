@@ -110,6 +110,15 @@ export function effectiveBundleCapPct(settingsRepo: SettingsRepo): number {
  * this, zero sells is just a quiet token, not evidence nobody *can* sell. */
 const HONEYPOT_MIN_BUYS_1H = 15;
 
+/** Buys needed before the sell-ratio test applies. Higher than the zero-sells threshold
+ * because a ratio needs a meaningful denominator: 3 buys and 0 sells is noise, 40 buys and
+ * 1 sell is a pattern. */
+const HONEYPOT_RATIO_MIN_BUYS_1H = 40;
+
+/** Minimum share of buys that sells must represent. Real coins, even strongly bought ones,
+ * see people take profit — a 5% floor flags the case where almost nobody can. */
+const HONEYPOT_MIN_SELL_SHARE = 0.05;
+
 /** Universal tradability floor for every entry alert, links or not. Measured against 192
  * resolved alerts, 186 already cleared it — so it costs virtually no coverage while
  * blocking coins that are not realistically enterable or exitable. */
@@ -210,8 +219,22 @@ function entryAlertBlockReason(
     return `only ${buys1h} buys in the last hour — no live demand`;
   }
 
-  if (buys1h >= HONEYPOT_MIN_BUYS_1H && snapshot.sells1h === 0) {
+  // Honeypot check, on two levels.
+  //
+  // Requiring literally zero sells was too easy to slip past: a contract that lets one
+  // wallet out — the deployer, or a whitelist — reads as "sells: 1" and passed cleanly.
+  // What actually distinguishes a honeypot is that buyers cannot get out *in proportion*,
+  // so a heavily-bought coin with almost no sells is flagged regardless of whether that
+  // number is exactly zero. Unknown sell data still never flags: it is not evidence.
+  const sells1h = snapshot.sells1h;
+  if (buys1h >= HONEYPOT_MIN_BUYS_1H && sells1h === 0) {
     return `possible honeypot: ${buys1h} buys but zero sells (1h)`;
+  }
+  if (sells1h != null && buys1h >= HONEYPOT_RATIO_MIN_BUYS_1H) {
+    const sellShare = sells1h / buys1h;
+    if (sellShare < HONEYPOT_MIN_SELL_SHARE) {
+      return `possible honeypot: ${buys1h} buys but only ${sells1h} sells (${Math.round(sellShare * 100)}% of buys)`;
+    }
   }
 
   if (!snapshot.websiteUrl && snapshot.socials.length === 0 && !hasStrongTraction(snapshot)) {

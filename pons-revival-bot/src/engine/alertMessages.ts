@@ -405,13 +405,38 @@ function formatRiskLine(
 }
 
 /** Compact links row: chart first, then whatever the project actually published. */
-function formatFooterLinks(dexUrl: string, snapshot?: Pick<MarketSnapshot, "websiteUrl" | "socials"> | null): string {
+function formatFooterLinks(
+  dexUrl: string,
+  snapshot?: Pick<MarketSnapshot, "websiteUrl" | "socials"> | null,
+  tokenAddress?: string,
+  chain?: string | null
+): string {
   const parts = [`<a href="${dexUrl}">📊 Chart</a>`];
+  // An explorer link is derivable from the address alone, so every alert carries at least
+  // two working links even when a coin has published nothing — which most Pons coins have
+  // not. Without it, an alert for a link-less coin offered a chart and nothing else.
+  const explorer = explorerUrl(tokenAddress, chain);
+  if (explorer) parts.push(`<a href="${explorer}">🔎 Explorer</a>`);
   if (snapshot?.websiteUrl) parts.push(`<a href="${snapshot.websiteUrl}">🌐 Web</a>`);
   for (const social of snapshot?.socials ?? []) {
     parts.push(`<a href="${social.url}">${socialLabel(social.type).split(" ")[0]}</a>`);
   }
   return parts.join(" · ");
+}
+
+/** Block explorer for a token, per chain. Omitted rather than guessed for chains without a
+ * known explorer, since a broken link is worse than none. */
+function explorerUrl(tokenAddress?: string, chain?: string | null): string | undefined {
+  if (!tokenAddress) return undefined;
+  const bases: Record<string, string> = {
+    robinhood: "https://robinhoodchain.blockscout.com/token/",
+    ethereum: "https://etherscan.io/token/",
+    bsc: "https://bscscan.com/token/",
+    solana: "https://solscan.io/token/",
+    hyperevm: "https://hyperevmscan.io/token/",
+  };
+  const base = bases[(chain ?? "robinhood").toLowerCase()];
+  return base ? `${base}${tokenAddress}` : undefined;
 }
 
 /** Friendly label + icon for a DexScreener social link type (e.g. "twitter" -> "🐦 Twitter"). */
@@ -499,7 +524,7 @@ export function buildRevivalAlertHtml(
   const performance = [joinLine(formatSinceAlertCompact(token, marketCapUsd), formatAthCompact(token, marketCapUsd))];
   const footer = [
     formatFirstAlertedLine(token, Date.now()),
-    formatFooterLinks(dexUrl, current),
+    formatFooterLinks(dexUrl, current, token.address, token.chain),
     `<code>${token.address}</code>`,
   ];
 
@@ -544,7 +569,7 @@ export function buildGraduationAlertHtml(
   const performance = [joinLine(formatSinceAlertCompact(token, resolvedMcap), formatAthCompact(token, resolvedMcap))];
   const footer = [
     formatFirstAlertedLine(token, Date.now()),
-    formatFooterLinks(dexUrl, snapshot),
+    formatFooterLinks(dexUrl, snapshot, token.address, token.chain),
     `<code>${token.address}</code>`,
   ];
 
@@ -598,7 +623,7 @@ export function buildMarketCapAlertHtml(
   const performance = [joinLine(formatSinceAlertCompact(token, marketCapUsd), formatAthCompact(token, marketCapUsd))];
   const footer = [
     formatFirstAlertedLine(token, Date.now()),
-    formatFooterLinks(dexUrl, snapshot),
+    formatFooterLinks(dexUrl, snapshot, token.address, token.chain),
     `<code>${token.address}</code>`,
   ];
 
@@ -652,7 +677,7 @@ export function buildMomentumAlertHtml(
   const performance = [joinLine(formatSinceAlertCompact(token, marketCapUsd), formatAthCompact(token, marketCapUsd))];
   const footer = [
     formatFirstAlertedLine(token, Date.now()),
-    formatFooterLinks(dexUrl, current),
+    formatFooterLinks(dexUrl, current, token.address, token.chain),
     `<code>${token.address}</code>`,
   ];
 
@@ -702,7 +727,7 @@ export function buildPerformanceMilestoneAlertHtml(
   ];
   const footer = [
     formatFirstAlertedLine(token, Date.now()),
-    formatFooterLinks(dexUrl, snapshot),
+    formatFooterLinks(dexUrl, snapshot, token.address, token.chain),
     `<code>${token.address}</code>`,
   ];
 
@@ -736,7 +761,18 @@ export function buildDumpWarningAlertHtml(token: TokenRow, entryMarketCapUsd: nu
           `💰 now <b>${formatUsd(observedMarketCapUsd)}</b> <i>(-${dropPct.toFixed(0)}%)</i>`
         ),
   ];
-  const footer = [formatFirstAlertedLine(token, Date.now()), `<code>${token.address}</code>`];
+  const footer = [
+    formatFirstAlertedLine(token, Date.now()),
+    // These alerts previously carried no links at all — a dump warning is exactly when a
+    // holder needs the chart and explorer fastest.
+    formatFooterLinks(
+      `https://dexscreener.com/${token.chain ?? "robinhood"}/${token.pair_address ?? token.address}`,
+      null,
+      token.address,
+      token.chain
+    ),
+    `<code>${token.address}</code>`,
+  ];
 
   return renderMessage(header, core, footer, [DISCLAIMER]);
 }
@@ -784,7 +820,7 @@ export function buildBreakoutAlertHtml(
   const performance = [joinLine(formatSinceAlertCompact(token, marketCapUsd), formatAthCompact(token, marketCapUsd))];
   const footer = [
     formatFirstAlertedLine(token, Date.now()),
-    formatFooterLinks(dexUrl, current),
+    formatFooterLinks(dexUrl, current, token.address, token.chain),
     `<code>${token.address}</code>`,
   ];
 
@@ -806,7 +842,18 @@ export function buildDemotionAlertHtml(token: TokenRow, current: MarketSnapshot,
       `💧 <b>${formatUsd(liquidity)}</b> <i>(${liquidityPct.toFixed(0)}% of median)</i>`
     ),
   ];
-  const footer = [formatFirstAlertedLine(token, Date.now()), `<code>${token.address}</code>`];
+  const footer = [
+    formatFirstAlertedLine(token, Date.now()),
+    // These alerts previously carried no links at all — a dump warning is exactly when a
+    // holder needs the chart and explorer fastest.
+    formatFooterLinks(
+      `https://dexscreener.com/${token.chain ?? "robinhood"}/${token.pair_address ?? token.address}`,
+      null,
+      token.address,
+      token.chain
+    ),
+    `<code>${token.address}</code>`,
+  ];
 
   return renderMessage(header, core, footer, [DISCLAIMER]);
 }
