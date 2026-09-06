@@ -112,9 +112,8 @@ primary_region = "iad"
   # launchpad factories (v1 and v2) are discovered and scanned now.
   DEX_POOL_DISCOVERY_ENABLED = "false"
   PONS_LAUNCHPAD_ONLY = "true"
-  # Empty: both launchpad versions are in scope, per the owner. v1 is retired but its
-  # coins can still wake up, and the swap feed costs nothing extra to watch them.
-  PONS_FACTORY_FILTER = ""
+  # Allowlist of every launchpad in scope; anything else is neither scanned nor alerted.
+  PONS_FACTORY_FILTER = "0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e,0xdab26bb66f29863f2d68ced54f65cc614c4e65dc,0xA5aAb3F0c6EeadF30Ef1D3Eb997108E976351feB,0x0c37a24F5D23A486FA692d1500881d698B1F77a4,stonkfun,raydium-launchlab"
   ROBINHOOD_RPC_URL = "https://rpc.mainnet.chain.robinhood.com"
   PONS_FACTORY_ACTIVE = "0xA5aAb3F0c6EeadF30Ef1D3Eb997108E976351feB"
   PONS_FACTORY_ACTIVE_START_BLOCK = "8991118"

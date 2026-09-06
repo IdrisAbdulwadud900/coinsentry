@@ -120,8 +120,16 @@ export class TokenRepo {
     // ponsFactory narrows further to ONE launchpad version (v2 in production). v1 is a
     // retired launchpad whose 1,739 coins are almost entirely dead; excluding them keeps
     // the budget on the launchpad that still mints.
-    const ponsFilter = ponsFactory
-      ? ` AND t.factory_address = '${ponsFactory.replace(/'/g, "")}' COLLATE NOCASE`
+    // An explicit allowlist, not merely "has a launchpad". Any-launchpad let coins from
+    // pads the owner never asked for (pump.fun, which out-launches everything else on
+    // Solana) consume the scan budget and reach alerts. Entries are validated before being
+    // interpolated, since the filter varies the statement shape and cannot be bound.
+    const allowed = (ponsFactory ?? "")
+      .split(",")
+      .map((v) => v.trim())
+      .filter((v) => /^[A-Za-z0-9_.\-]+$/.test(v));
+    const ponsFilter = allowed.length > 0
+      ? ` AND t.factory_address COLLATE NOCASE IN (${allowed.map((v) => `'${v}'`).join(", ")})`
       : ponsOnly
         ? " AND t.factory_address IS NOT NULL"
         : "";
@@ -255,8 +263,13 @@ export class TokenRepo {
     /** Narrow to one launchpad version; see listTrackableForCycle. */
     ponsFactory?: string | null
   ): TokenRow[] {
-    const ponsFilter = ponsFactory
-      ? ` AND factory_address = '${ponsFactory.replace(/'/g, "")}' COLLATE NOCASE`
+    // Same allowlist as listTrackableForCycle; see the comment there.
+    const allowed = (ponsFactory ?? "")
+      .split(",")
+      .map((v) => v.trim())
+      .filter((v) => /^[A-Za-z0-9_.\-]+$/.test(v));
+    const ponsFilter = allowed.length > 0
+      ? ` AND factory_address COLLATE NOCASE IN (${allowed.map((v) => `'${v}'`).join(", ")})`
       : ponsOnly
         ? " AND factory_address IS NOT NULL"
         : "";

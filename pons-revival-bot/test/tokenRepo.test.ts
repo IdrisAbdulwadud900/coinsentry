@@ -533,3 +533,41 @@ describe("event-driven scanning", () => {
     expect(all).toEqual(["DEAD", "HOT", "NEW"]);
   });
 });
+
+describe("launchpad allowlist", () => {
+  // "Any launchpad" let pump.fun coins — the largest source of Solana launches — consume
+  // the scan budget and reach alerts, crowding out the pads actually targeted.
+  it("scans only the launchpads on the list", () => {
+    const db = openDatabase(":memory:");
+    const repo = new TokenRepo(db);
+    const now = Date.now();
+    const mk = (addr: string, sym: string, pad: string | null) =>
+      repo.insertIfNew(addr, sym, sym, "0xp", "active", null, pad, now - 7200000);
+
+    mk("0xaa00000000000000000000000000000000000001", "PONS", "0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e");
+    mk("0xbb00000000000000000000000000000000000002", "STONK", "stonkfun");
+    mk("0xcc00000000000000000000000000000000000003", "BONK", "raydium-launchlab");
+    mk("0xdd00000000000000000000000000000000000004", "PUMP", "pump.fun");
+    mk("0xee00000000000000000000000000000000000005", "NONE", null);
+
+    const allow = "0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e,stonkfun,raydium-launchlab";
+    const scanned = repo.listTrackableForCycle(50, undefined, true, allow).map((t) => t.symbol).sort();
+
+    expect(scanned).toEqual(["BONK", "PONS", "STONK"]);
+  });
+
+  it("ignores injection-shaped entries instead of interpolating them", () => {
+    const db = openDatabase(":memory:");
+    const repo = new TokenRepo(db);
+    const now = Date.now();
+    repo.insertIfNew("0xaa00000000000000000000000000000000000001", "KEEP", "Keep", "0xp", "active", null, "stonkfun", now - 7200000);
+
+    // The filter varies the statement shape so it cannot be bound; entries are validated
+    // instead, and anything with quotes or spaces is dropped rather than interpolated.
+    const scanned = repo
+      .listTrackableForCycle(50, undefined, true, "stonkfun,' OR 1=1 --")
+      .map((t) => t.symbol);
+
+    expect(scanned).toEqual(["KEEP"]);
+  });
+});

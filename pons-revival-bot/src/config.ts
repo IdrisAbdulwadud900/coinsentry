@@ -144,7 +144,12 @@ const ConfigSchema = z.object({
   // alternative, matching LetsBonk's platform-config account
   // (FfYek5vEz23cMkWsdJwG2oa6EphsvXSHrGpdALN4g6W1) per coin, needs a paid streaming feed
   // and would cost far more than it filters out.
-  SOLANA_TRACKED_LAUNCHPADS: z.string().default("raydium-launchlab,pump.fun"),
+  // raydium-launchlab ONLY. That covers both Solana launchpads the owner targets: LetsBonk
+  // is built on LaunchLab, and StonkFun coins arrive separately through StonkFun's own
+  // ledger. pump.fun was tracked briefly and is deliberately excluded — it is the largest
+  // source of Solana launches by volume, so leaving it in floods the scan budget with coins
+  // that are out of scope and pushes the targeted launchpads out of the cycle.
+  SOLANA_TRACKED_LAUNCHPADS: z.string().default("raydium-launchlab"),
   DISCOVERY_CHUNK_BLOCKS: z.coerce.number().int().positive().default(500_000),
   // Launches one discovery pass may hold before deferring the rest to the next cycle. The
   // scan used to run unbounded to the chain head, which is fine while the bot is keeping up
@@ -170,27 +175,36 @@ const ConfigSchema = z.object({
   // spread across all of it, so launchpad coins were revisited rarely. With this on, the
   // budget covers the launchpad repeatedly instead of the chain thinly.
   PONS_LAUNCHPAD_ONLY: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
-  // Narrow further to a single launchpad version. Set to the v2 factory address in
-  // production: v1 is retired and its 1,739 coins are almost entirely dead, so scanning
-  // them spends budget that belongs to the launchpad still minting ~18.7k coins a day.
-  // Regex-constrained because this value is interpolated into a SQL fragment (the filter
-  // varies the statement shape, so it cannot be a bound parameter). Restricting it to a
-  // 0x-prefixed 20-byte hex address makes anything injectable fail to load at startup.
-  // Chunks of ~600 blocks the swap-activity scan covers per fast cycle. The fast cycle runs
-  // every 20s and 600 blocks is ~60s of chain, so 4 chunks (~4 minutes of chain) keeps the
-  // scan comfortably ahead of real time and absorbs a backlog after any downtime.
+  // Chunks of ~300 blocks the swap-activity scan covers per fast cycle. The fast cycle runs
+  // every 20s and 300 blocks is ~30s of chain, so 4 chunks keeps the scan ahead of real
+  // time and absorbs a backlog after any downtime.
   SWAP_SCAN_MAX_CHUNKS_PER_CYCLE: z.coerce.number().int().positive().default(4),
   // Hours of chain-observed activity that qualify a coin for scanning. Discovery is driven
-  // by two chain feeds — Pons factory launches (new pairs) and swap logs (coins being
-  // bought) — so the scan only revisits what the chain has actually mentioned. Polling the
-  // whole registry instead made cost grow with the number of dead coins that had ever
-  // existed, and left a coin that started moving waiting behind them. 0 restores that old
-  // behaviour.
+  // by chain feeds — launchpad events and swap logs — so the scan only revisits what the
+  // chain has actually mentioned. Polling the whole registry instead made cost grow with
+  // the number of dead coins that had ever existed, and left a coin that started moving
+  // waiting behind them. 0 restores that old behaviour.
   EVENT_DRIVEN_WINDOW_HOURS: z.coerce.number().nonnegative().default(24),
+  // The only launchpads whose coins may be scanned or alerted, comma-separated, matched
+  // against tokens.factory_address. This is an allowlist by design: "any launchpad" let
+  // pump.fun coins — the largest source of Solana launches — flood the scan budget and
+  // reach alerts, crowding out the pads actually targeted. Empty falls back to "any
+  // launchpad", which is looser than intended, so keep it populated.
+  //
+  // Values here: the two live Robinhood launchpads, the two retired Pons factories (their
+  // old coins can still wake up), StonkFun's ledger marker, and raydium-launchlab, which
+  // is how Jupiter labels LetsBonk coins.
   PONS_FACTORY_FILTER: z
     .string()
-    .regex(/^(0x[a-fA-F0-9]{40})?$/, "PONS_FACTORY_FILTER must be a 0x address or empty")
-    .default(""),
+    .regex(/^[A-Za-z0-9_.,\-\s]*$/, "PONS_FACTORY_FILTER must be a comma-separated list of launchpad ids")
+    .default(
+      "0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e," +
+        "0xdab26bb66f29863f2d68ced54f65cc614c4e65dc," +
+        "0xA5aAb3F0c6EeadF30Ef1D3Eb997108E976351feB," +
+        "0x0c37a24F5D23A486FA692d1500881d698B1F77a4," +
+        "stonkfun," +
+        "raydium-launchlab"
+    ),
   // Bearer token for X (Twitter) API v2 recent search, used to list the accounts that have
   // posted a coin's contract address. X removed free search access in 2023, so this needs a
   // paid tier; left blank, alerts simply omit the section rather than implying nobody has
