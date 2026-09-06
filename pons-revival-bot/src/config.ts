@@ -105,6 +105,14 @@ const ConfigSchema = z.object({
         "0xdab26bb66f29863f2d68ced54f65cc614c4e65dc|0x8aa5d65868d43c207781ea83c30847c2ef67f7ccfa3c023bcd317beeedc9be3f|1"
     ),
   ACTIVE_LAUNCHPAD_START_BLOCK: z.coerce.number().int().nonnegative().default(0),
+  // StonkFun, a Solana launchpad. Solana has no event logs to scan, so discovery reads the
+  // launchpad's own public ledger instead — page 1 is newest-first and spans ~16 minutes of
+  // launches, and coins list at roughly $2,800-$3,000, which is early enough to matter.
+  // Blank disables it entirely.
+  STONKFUN_API_BASE: z.string().default("https://www.stonkfun.xyz/api/public/v1"),
+  // Ledger pages read on each pass. 1 covers live launches; more is only useful on a cold
+  // start, where deeper pages backfill recent history (345 pages hold all 8,601 launches).
+  STONKFUN_PAGES_PER_CYCLE: z.coerce.number().int().positive().default(1),
   DISCOVERY_CHUNK_BLOCKS: z.coerce.number().int().positive().default(500_000),
   // Launches one discovery pass may hold before deferring the rest to the next cycle. The
   // scan used to run unbounded to the chain head, which is fine while the bot is keeping up

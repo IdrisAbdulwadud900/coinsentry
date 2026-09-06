@@ -104,7 +104,10 @@ primary_region = "iad"
   # Pons launchpad only, on Robinhood. Other chains and the direct DEX-pool scans are off:
   # they pulled in the whole chain (458,000 tokens against ~20,000 launchpad coins) and the
   # scan budget was spread across all of it.
-  ENABLED_CHAINS = "robinhood"
+  # solana is back: StonkFun launches are Solana mints, and every stage after discovery
+  # (DexScreener market data, the Jupiter mint/freeze audit, the alert gates) already
+  # supports them.
+  ENABLED_CHAINS = "robinhood,solana"
   # Direct DEX-pool scanning off: it is what pulled the whole chain in. Only the two Pons
   # launchpad factories (v1 and v2) are discovered and scanned now.
   DEX_POOL_DISCOVERY_ENABLED = "false"

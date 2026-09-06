@@ -51,12 +51,18 @@ import { runDexPoolDiscovery, type ChainPoolConfig } from "../data/dexPoolDiscov
 import { runSolanaDiscovery } from "../data/solanaDiscovery.js";
 import type { JupiterClient } from "../data/jupiterClient.js";
 import type { XSearchClient, XMention } from "../data/xSearchClient.js";
+import type { StonkfunClient } from "../data/stonkfunClient.js";
 import { scanRecentSwaps, SWAP_SCAN_CHUNK_BLOCKS } from "../data/swapScanner.js";
 import type { DexPair } from "../types/dexscreener.js";
 import type { OutcomeRepo, AlertOutcomeRow } from "../data/outcomeRepo.js";
 
 /** How many prior snapshots (since a token became dead) feed the trailing-median baseline. */
 const BASELINE_SAMPLE_LIMIT = 12;
+
+/** Marks a coin as coming from the StonkFun launchpad. Stored in factory_address so the
+ * launchpad-only scan filter treats these exactly like Pons coins rather than excluding
+ * them as chain noise. */
+const STONKFUN_LAUNCHPAD_ID = "stonkfun";
 
 /**
  * Hard ceiling (USD) on the market cap at which ANY alert may first fire — the owner's
@@ -834,6 +840,8 @@ export interface PollerDeps {
   /** Pools already resolved to nothing we track, so they are not re-resolved every cycle.
    * Process-lifetime only; losing it on restart just repeats cheap work once. */
   resolvedPoolCache: Set<string>;
+  /** StonkFun launch ledger reader; absent means that launchpad is not tracked. */
+  stonkfunClient?: StonkfunClient;
   /** Per-chain pool-factory scanning setup (Robinhood, plus BSC/Ethereum when configured). */
   poolChainConfigs: ChainPoolConfig[];
   /** Blockscout-compatible holder/metadata APIs, keyed by chain. Robinhood and Ethereum
@@ -2213,6 +2221,58 @@ async function runSwapActivityScan(deps: PollerDeps, now: number): Promise<void>
   }
 }
 
+/**
+ * Discovers StonkFun launches — the Solana counterpart to watching a launchpad factory.
+ *
+ * Solana has no event logs to scan, so this reads the launchpad's own public ledger. Page 1
+ * is newest-first and spans roughly 16 minutes of launches, so polling that single page
+ * catches everything with a wide margin over the poll interval; deeper pages are only worth
+ * reading on a cold start, which `pages` allows.
+ *
+ * Coins are listed at roughly $2,800-$3,000 of market cap, which is the entire point: this
+ * reaches them before any move, and every later stage (DexScreener market data, the Jupiter
+ * mint/freeze audit, the alert gates) already handles Solana coins, so only discovery was
+ * ever missing.
+ */
+async function runStonkfunDiscovery(deps: PollerDeps, now: number, pages = 1): Promise<void> {
+  const client = deps.stonkfunClient;
+  if (!client) return;
+
+  let inserted = 0;
+  for (let page = 1; page <= pages; page += 1) {
+    const launches = await client.fetchLaunches(page);
+    // null means the request failed. Stopping beats pressing on: a later page's data says
+    // nothing about the page that errored, and the next cycle retries from the top anyway.
+    if (launches == null) break;
+    if (launches.length === 0) break;
+
+    for (const launch of launches) {
+      if (deps.tokenRepo.findByAddress(launch.mint) !== undefined) continue;
+      deps.tokenRepo.insertIfNew(
+        launch.mint,
+        launch.symbol,
+        launch.name,
+        launch.pool ?? "",
+        // 'unindexed' because a coin seconds old has no DexScreener pair yet. The recheck
+        // sweep promotes it as soon as one appears, exactly as for a fresh Pons launch.
+        "unindexed",
+        null,
+        STONKFUN_LAUNCHPAD_ID,
+        launch.createdAt ?? now,
+        launch.pool ?? null,
+        null,
+        // launchBlock: Solana has slots, not EVM block numbers, and nothing reads this for
+        // a Solana coin — passing the chain here by mistake silently filed every StonkFun
+        // launch as a Robinhood token.
+        null,
+        "solana"
+      );
+      inserted += 1;
+    }
+  }
+  if (inserted > 0) deps.logger.info({ inserted }, "StonkFun discovery inserted new launches");
+}
+
 export async function runFastCycle(deps: PollerDeps): Promise<void> {
   const { tokenRepo, dex, dexScreenerChainId, logger } = deps;
   const now = Date.now();
@@ -2243,6 +2303,12 @@ export async function runFastCycle(deps: PollerDeps): Promise<void> {
     await runSwapActivityScan(deps, now);
   } catch (err) {
     logger.error({ err: String(err) }, "Swap activity scan failed, continuing");
+  }
+
+  try {
+    await runStonkfunDiscovery(deps, now);
+  } catch (err) {
+    logger.error({ err: String(err) }, "StonkFun discovery failed, continuing");
   }
 
   // Runs here as well as in the slow cycle: the young-token fast lane inside this sweep
