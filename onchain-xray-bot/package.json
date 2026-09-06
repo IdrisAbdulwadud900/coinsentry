@@ -1,0 +1,31 @@
+{
+  "name": "onchain-xray-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot that x-rays any token contract: dev wallet graph, floor-range entries, diamond-hand traders, and hidden supply-relay dumps",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "xray": "tsx scripts/xray.ts",
+    "probe": "tsx scripts/probe.ts",
+    "launchpads": "tsx scripts/launchpads.ts",
+    "audit": "tsx scripts/audit.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "grammy": "^1.32.0",
+    "pino": "^9.6.0",
+    "pino-pretty": "^13.0.0",
+    "viem": "^2.21.54",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

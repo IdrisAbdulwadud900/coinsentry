@@ -1,0 +1,32 @@
+{
+  "name": "pons-revival-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot that monitors dead Pons-launched tokens on Robinhood Chain and alerts on genuine volume/buyer revival signals",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "backfill": "tsx scripts/backfill-discovery.ts",
+    "backfill:factory-address": "tsx scripts/backfill-factory-address.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.9.1",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.1.0",
+    "grammy": "^1.32.0",
+    "pino": "^9.6.0",
+    "pino-pretty": "^13.0.0",
+    "viem": "^2.21.54",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

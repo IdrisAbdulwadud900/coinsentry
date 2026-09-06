@@ -1,0 +1,21 @@
+app = "onchain-xray-bot"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  LOG_LEVEL = "info"
+
+# Long-poll bot: exactly one instance, always on. Two would double-consume
+# updates from Telegram and answer every message twice.
+[processes]
+  app = "node dist/index.js"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+[deploy]
+  strategy = "immediate"

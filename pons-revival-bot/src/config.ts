@@ -1,0 +1,341 @@
+import "dotenv/config";
+import { z } from "zod";
+
+const ConfigSchema = z.object({
+  TELEGRAM_BOT_TOKEN: z.string().min(1, "TELEGRAM_BOT_TOKEN is required"),
+  TELEGRAM_CHAT_ID: z.string().min(1, "TELEGRAM_CHAT_ID is required"),
+
+  POLL_INTERVAL_SECONDS: z.coerce.number().int().positive().default(300),
+  // Maintenance switch. With this false the bot boots, serves its API and answers Telegram
+  // commands but starts no polling, which is what makes it possible to repair or prune the
+  // database on a live machine — the alternative is racing a crash-looping poller for a
+  // shell. Never leave it false: nothing is discovered and no alert can fire.
+  // Enum rather than z.coerce.boolean(): coercion is Boolean("false") === true, so the
+  // string "false" would switch the flag ON and quietly defeat the whole point of it.
+  POLLING_ENABLED: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
+
+  // The fast poller catches a launch within seconds of it happening — the measured
+  // best-performing alert bucket is coins under 5 minutes old, which only this loop can
+  // reach. It was off while new pairs were out of scope and while the unindexed sweep it
+  // shares could materialise 400k rows in one read (the crash the whole hunt was chasing);
+  // that read is now hard-capped, and new pairs are targets again.
+  FAST_POLLING_ENABLED: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
+
+  DEAD_MIN_AGE_HOURS: z.coerce.number().positive().default(24),
+  DEAD_VOLUME_24H_USD: z.coerce.number().nonnegative().default(500),
+  DEAD_MIN_BUYS_1H: z.coerce.number().int().nonnegative().default(3),
+  DEAD_CONFIRM_POLLS: z.coerce.number().int().positive().default(6),
+
+  REVIVAL_VOLUME_MULTIPLE: z.coerce.number().positive().default(8),
+  REVIVAL_MIN_VOLUME_1H_USD: z.coerce.number().nonnegative().default(300),
+  REVIVAL_MIN_BUYS_1H: z.coerce.number().int().nonnegative().default(5),
+  REVIVAL_LIQUIDITY_FLOOR_PCT: z.coerce.number().min(0).max(1).default(0.8),
+  REVIVAL_CONFIRM_POLLS: z.coerce.number().int().positive().default(2),
+  ALERT_COOLDOWN_HOURS: z.coerce.number().positive().default(6),
+  DEMOTE_CONFIRM_POLLS: z.coerce.number().int().positive().default(3),
+
+  // Was 7 days, which accumulated 4.4M snapshot rows and a 908MB database on a 1GB volume
+  // until writes failed with "database or disk is full" and the bot crash-looped for ~31
+  // hours. Nothing reads snapshots older than a couple of days: the classifier's baselines
+  // and the breakout detector both work from recent windows, and the observer's 1h/6h/24h
+  // checkpoints live in alert_outcomes, not here.
+  SNAPSHOT_RETENTION_DAYS: z.coerce.number().positive().default(3),
+
+  ROBINHOOD_CHAIN_ID_DEXSCREENER: z.string().min(1).default("robinhood"),
+  // Chains to track, as DexScreener chainId slugs (see src/data/chains.ts). Robinhood is
+  // discovered from Pons factory events on-chain; every other chain is discovered from
+  // DexScreener's cross-chain profile/boost feeds. Graduation/bundle%/dev-wallet lines are
+  // Pons-specific and appear on Robinhood only; holders appear wherever a Blockscout
+  // instance is configured (Robinhood + Ethereum by default), and Solana additionally gets
+  // SPL mint/freeze-authority safety checks.
+  ENABLED_CHAINS: z.string().min(1).default("robinhood,solana,bsc,ethereum,hyperevm"),
+  ROBINHOOD_RPC_URL: z.string().url().default("https://rpc.mainnet.chain.robinhood.com"),
+  // Robinhood Chain's official Blockscout explorer, used only to read real token holder
+  // balances (free, no API key) for the "top 10 holders / concentration" alert field.
+  BLOCKSCOUT_API_BASE_URL: z.string().url().default("https://robinhoodchain.blockscout.com"),
+  // Free, keyless Blockscout instance for Ethereum, used for the top-10-holders line on
+  // ETH tokens. BSC has no free keyless equivalent, so BSC alerts omit that line; set
+  // BSC_BLOCKSCOUT_URL to any Blockscout-compatible endpoint to switch it on.
+  ETHEREUM_BLOCKSCOUT_URL: z.string().url().default("https://eth.blockscout.com"),
+  BSC_BLOCKSCOUT_URL: z.string().url().optional().or(z.literal("")).default(""),
+  // Solana JSON-RPC, used only for SPL mint/freeze authority safety checks at alert time.
+  // The default public endpoint serves these light calls without a key.
+  // Not .url(): a malformed value here used to abort startup outright, and the bot
+  // crash-looped until the secret was removed. A mistyped optional endpoint — a URL split
+  // across two lines when pasted, say — must never be able to take the whole bot down, so
+  // an unusable value falls back to the public endpoint with a warning instead. Every other
+  // feature keeps working; only Solana safety checks are affected.
+  SOLANA_RPC_URL: z
+    .string()
+    .default("https://api.mainnet-beta.solana.com")
+    .transform((raw) => {
+      const cleaned = raw.trim().replace(/\s+/g, "");
+      try {
+        const parsed = new URL(cleaned);
+        if (parsed.protocol === "http:" || parsed.protocol === "https:") return cleaned;
+      } catch {
+        // fall through to the default below
+      }
+      // eslint-disable-next-line no-console -- the logger does not exist yet at config load.
+      console.warn(
+        `SOLANA_RPC_URL is not a usable URL; falling back to the public endpoint. ` +
+          `Solana safety checks will be rate-limited until it is corrected.`
+      );
+      return "https://api.mainnet-beta.solana.com";
+    }),
+  // A Solana deployer with more lifetime mints than this is a spam farm (Jupiter reports
+  // the count per token; values in the hundreds are routine for mass minters).
+  SOLANA_SPAM_DEV_MINTS: z.coerce.number().int().positive().default(50),
+  // Lowest alert conviction to deliver (see rateConviction in poller.ts, derived from
+  // measured win rates). "low" keeps full coverage — nothing is suppressed. Set "high"
+  // for the ~82%-win-rate stream only (Robinhood, alerted within 5 min of launch), or
+  // "medium" to drop just the early-Solana bucket that dumps ~55% of the time.
+  MIN_ALERT_CONVICTION: z.enum(["low", "medium", "high"]).default("low"),
+  // Breakout signal: a coin accelerating against its own trailing baseline, at any age.
+  // This is the path that catches the 2k->high move when it happens hours or days after
+  // launch, which every other alert path structurally misses.
+  BREAKOUT_VOLUME_MULTIPLE: z.coerce.number().positive().default(5),
+  BREAKOUT_MIN_VOLUME_1H_USD: z.coerce.number().nonnegative().default(3000),
+  BREAKOUT_MIN_BUYS_1H: z.coerce.number().int().nonnegative().default(30),
+  BREAKOUT_COOLDOWN_HOURS: z.coerce.number().positive().default(12),
+  // How far price must climb off the sampled low to count as reversing off the floor.
+  // 1.4 = 40% up from the bottom: enough to distinguish a real turn from tick noise,
+  // low enough to catch the move while it is still worth catching.
+  REVERSAL_MULTIPLE: z.coerce.number().positive().default(1.4),
+  PONS_FACTORY_ACTIVE: z.string().min(1),
+  PONS_FACTORY_ACTIVE_START_BLOCK: z.coerce.number().int().nonnegative(),
+  PONS_FACTORY_LEGACY: z.string().min(1),
+  PONS_FACTORY_LEGACY_START_BLOCK: z.coerce.number().int().nonnegative(),
+  /**
+   * The launchpads actually minting, as `address|topic0|tokenTopicIndex` entries separated
+   * by commas. Optional 4th and 5th fields give the pool and deployer topic indexes.
+   *
+   * A list rather than one entry because this chain runs several at once, and the coins the
+   * owner reports as missed have come from a different one each time. Measured over 20,000
+   * blocks: 0x7ed598bc emits 821 launches, 0xdab26bb6 emits 47, while BOTH factories this
+   * bot originally shipped with emit zero — they are retired. A coin from an unwatched
+   * launchpad is never introduced to the registry at all, so it cannot be alerted on no
+   * matter how well every other part of the pipeline works.
+   *
+   * Each layout was verified on-chain by reading symbol() off the address in the token
+   * topic and confirming a real ERC20 came back, not assumed from the event name.
+   */
+  ACTIVE_LAUNCHPADS: z
+    .string()
+    .default(
+      "0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e|0x8d4aad4953d0ca700d468f3753aa14432d1b35b43ec6409f051fb6aa43a89607|1|2|3," +
+        "0xdab26bb66f29863f2d68ced54f65cc614c4e65dc|0x8aa5d65868d43c207781ea83c30847c2ef67f7ccfa3c023bcd317beeedc9be3f|1"
+    ),
+  ACTIVE_LAUNCHPAD_START_BLOCK: z.coerce.number().int().nonnegative().default(0),
+  // StonkFun, a Solana launchpad. Solana has no event logs to scan, so discovery reads the
+  // launchpad's own public ledger instead — page 1 is newest-first and spans ~16 minutes of
+  // launches, and coins list at roughly $2,800-$3,000, which is early enough to matter.
+  // Blank disables it entirely.
+  STONKFUN_API_BASE: z.string().default("https://www.stonkfun.xyz/api/public/v1"),
+  // Ledger pages read on each pass. 1 covers live launches; more is only useful on a cold
+  // start, where deeper pages backfill recent history (345 pages hold all 8,601 launches).
+  STONKFUN_PAGES_PER_CYCLE: z.coerce.number().int().positive().default(1),
+  // Solana launchpads to track, as Jupiter names them, comma-separated. Empty tracks every
+  // launchpad Jupiter knows.
+  //
+  // LetsBonk (letsbonk.fun) is built on Raydium LaunchLab and its coins report as
+  // "raydium-launchlab" — Jupiter does not distinguish LaunchLab platforms from one
+  // another, so tracking LetsBonk necessarily means tracking LaunchLab as a whole. The
+  // alternative, matching LetsBonk's platform-config account
+  // (FfYek5vEz23cMkWsdJwG2oa6EphsvXSHrGpdALN4g6W1) per coin, needs a paid streaming feed
+  // and would cost far more than it filters out.
+  // raydium-launchlab ONLY. That covers both Solana launchpads the owner targets: LetsBonk
+  // is built on LaunchLab, and StonkFun coins arrive separately through StonkFun's own
+  // ledger. pump.fun was tracked briefly and is deliberately excluded — it is the largest
+  // source of Solana launches by volume, so leaving it in floods the scan budget with coins
+  // that are out of scope and pushes the targeted launchpads out of the cycle.
+  SOLANA_TRACKED_LAUNCHPADS: z.string().default("raydium-launchlab"),
+  DISCOVERY_CHUNK_BLOCKS: z.coerce.number().int().positive().default(500_000),
+  // Launches one discovery pass may hold before deferring the rest to the next cycle. The
+  // scan used to run unbounded to the chain head, which is fine while the bot is keeping up
+  // and fatal once it is not: a multi-day backlog on Robinhood pinned ~511MB of live
+  // objects and the process died on its heap limit every cycle. See scanTokenLaunches.
+  DISCOVERY_MAX_LAUNCHES_PER_CYCLE: z.coerce.number().int().positive().default(2_000),
+  // How far back factory discovery reaches when it has no cursor. The factories deployed
+  // ~44M blocks below the current head, so starting there on a cold start would spend days
+  // replaying ancient launches before seeing anything currently launching.
+  //
+  // 8M blocks is ~9.3 days. The first attempt at 2M (~2.3 days) proved too shallow: a coin
+  // launched 5.2 days before the registry rebuild was never discovered at all, because the
+  // launch event that would have introduced it fell outside the window — and a coin the
+  // registry never learns about cannot be alerted on no matter how hard it is later bought.
+  DISCOVERY_COLD_START_LOOKBACK_BLOCKS: z.coerce.number().int().positive().default(8_000_000),
+  // Watch the chain's DEX pool factories directly, not just the Pons launchpad. Most
+  // Robinhood tokens are launched straight onto a DEX and never touch Pons, so without
+  // this they were completely invisible (see src/data/dexPoolDiscovery.ts).
+  DEX_POOL_DISCOVERY_ENABLED: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
+  // Restricts every scan and alert to coins from the two Pons launchpad factories (v1 and
+  // v2). Watching the chain's DEX pools directly pulled in essentially the whole chain —
+  // 458,000 tokens against roughly 20,000 launchpad coins — and the per-cycle budget was
+  // spread across all of it, so launchpad coins were revisited rarely. With this on, the
+  // budget covers the launchpad repeatedly instead of the chain thinly.
+  PONS_LAUNCHPAD_ONLY: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
+  // Chunks of ~300 blocks the swap-activity scan covers per fast cycle. The fast cycle runs
+  // every 20s and 300 blocks is ~30s of chain, so 4 chunks keeps the scan ahead of real
+  // time and absorbs a backlog after any downtime.
+  SWAP_SCAN_MAX_CHUNKS_PER_CYCLE: z.coerce.number().int().positive().default(4),
+  // Hours of chain-observed activity that qualify a coin for scanning. Discovery is driven
+  // by chain feeds — launchpad events and swap logs — so the scan only revisits what the
+  // chain has actually mentioned. Polling the whole registry instead made cost grow with
+  // the number of dead coins that had ever existed, and left a coin that started moving
+  // waiting behind them. 0 restores that old behaviour.
+  EVENT_DRIVEN_WINDOW_HOURS: z.coerce.number().nonnegative().default(24),
+  // The only launchpads whose coins may be scanned or alerted, comma-separated, matched
+  // against tokens.factory_address. This is an allowlist by design: "any launchpad" let
+  // pump.fun coins — the largest source of Solana launches — flood the scan budget and
+  // reach alerts, crowding out the pads actually targeted. Empty falls back to "any
+  // launchpad", which is looser than intended, so keep it populated.
+  //
+  // Values here: the two live Robinhood launchpads, the two retired Pons factories (their
+  // old coins can still wake up), StonkFun's ledger marker, and raydium-launchlab, which
+  // is how Jupiter labels LetsBonk coins.
+  PONS_FACTORY_FILTER: z
+    .string()
+    .regex(/^[A-Za-z0-9_.,\-\s]*$/, "PONS_FACTORY_FILTER must be a comma-separated list of launchpad ids")
+    .default(
+      "0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e," +
+        "0xdab26bb66f29863f2d68ced54f65cc614c4e65dc," +
+        "0xA5aAb3F0c6EeadF30Ef1D3Eb997108E976351feB," +
+        "0x0c37a24F5D23A486FA692d1500881d698B1F77a4," +
+        "stonkfun," +
+        "raydium-launchlab"
+    ),
+  // Bearer token for X (Twitter) API v2 recent search, used to list the accounts that have
+  // posted a coin's contract address. X removed free search access in 2023, so this needs a
+  // paid tier; left blank, alerts simply omit the section rather than implying nobody has
+  // posted about a coin when the truth is that we could not look.
+  X_BEARER_TOKEN: z.string().optional().or(z.literal("")).default(""),
+  // Blocks per getLogs call for the pool scan. ~101ms blocks means 20k ≈ 34 minutes, and
+  // this RPC serves that range comfortably.
+  DEX_POOL_CHUNK_BLOCKS: z.coerce.number().int().positive().default(20_000),
+  // Public, keyless RPCs for the BSC/Ethereum pool scans (both verified serving eth_getLogs
+  // on 2026-08-04). Leave either blank to stop scanning that chain.
+  BSC_RPC_URL: z.string().url().optional().or(z.literal("")).default("https://bsc-rpc.publicnode.com"),
+  ETHEREUM_RPC_URL: z.string().url().optional().or(z.literal("")).default("https://eth.drpc.org"),
+  // Two earlier choices both failed in ways that silently disabled this chain: drpc.org
+  // does not implement eth_blockNumber at all (HTTP 400), so discovery could never read the
+  // chain head; and Hyperliquid's own rpc.hyperliquid.xyz/evm returns -32005 "rate limited"
+  // under this bot's steady polling. This endpoint served 80 consecutive getLogs calls with
+  // no errors. It still caps ranges at 1,000 blocks, which the 900-block chunk fits.
+  HYPEREVM_RPC_URL: z.string().url().optional().or(z.literal("")).default("https://rpc.hypurrscan.io"),
+  // How far back to look the first time a pool source is scanned (~1h at 101ms blocks).
+  DEX_POOL_BACKFILL_BLOCKS: z.coerce.number().int().positive().default(36_000),
+
+  // Consecutive cycles an 'active' token may return no DexScreener data before it is
+  // demoted to 'unindexed'. Without this the active set fills with tokens that were
+  // indexed once and never again (measured: 80% of it), and the per-cycle request budget
+  // is spent on them instead of on coins that actually trade.
+  NO_MARKET_DATA_DEMOTE_STREAK: z.coerce.number().int().positive().default(3),
+  // Liquidity must be at least this percent of market cap for the market cap to be
+  // believed. Market cap is derived from pool price, so a drained pool reports nonsense —
+  // one observed coin showed a $66,194 market cap on $0.02 of liquidity and recorded a
+  // $66 BILLION all-time high, which also mislabelled it a "winner" for the observer.
+  MIN_LIQUIDITY_TO_MCAP_PCT: z.coerce.number().nonnegative().default(2),
+
+  DISCOVERY_MIN_LIQUIDITY_USD: z.coerce.number().nonnegative().default(200),
+  // Number of blocks after a token's launch to scan for real DEX buys (Transfer events
+  // from the token's own pool) when computing early-buy-concentration ("bundle %").
+  EARLY_BUY_WINDOW_BLOCKS: z.coerce.number().int().positive().default(500),
+  SPAM_DEPLOYER_THRESHOLD: z.coerce.number().int().positive().default(15),
+  // How long before an unindexed coin is looked at again.
+  //
+  // 24h was far longer than the sweep's actual capacity and it cost real coins: CATSTRO
+  // (0x6f81f30c) was checked while dead, woke up 46 days after launch to 613 buys and
+  // $121k of hourly volume, and was invisible the whole time because its next look was up
+  // to a day away. The swap feed cannot rescue that case either — 452,022 of 453,962
+  // unindexed coins have no pool recorded, so their swaps cannot be matched back to them.
+  //
+  // Capacity says 3h is comfortable: 8,000 rows per cycle at 5-minute cycles is ~96,000
+  // an hour, so all ~454,000 unindexed coins are revisited about every 4.7 hours anyway.
+  // A 24-hour gate was simply excluding coins the sweep had the budget to check.
+  UNINDEXED_RECHECK_HOURS: z.coerce.number().positive().default(3),
+  // Max graduationStatus() calls aggregated into a single multicall3 RPC request.
+  // 300 is a conservative default kept well under typical eth_call response-size
+  // limits; it hasn't been empirically pushed to this RPC's actual ceiling the way
+  // DISCOVERY_CHUNK_BLOCKS has, so raise cautiously if larger batches are needed.
+  GRADUATION_CHECK_BATCH_SIZE: z.coerce.number().int().positive().default(300),
+  // Max tokens the main poll cycle pulls market data for per pass (see
+  // listTrackableForCycle: dead/alerted revival candidates first, then actives
+  // round-robin). Bounds the cycle's DexScreener cost so it stays inside
+  // POLL_INTERVAL_SECONDS instead of overrunning as the token table grows; the whole
+  // trackable set is still covered, just across consecutive cycles. At the default
+  // 250 req/min and 30 addresses per request, 50,000 tokens ≈ 6.7 minutes of API time.
+  MARKET_SCAN_BATCH_SIZE: z.coerce.number().int().positive().default(50_000),
+  // Rows the unindexed recheck sweep promotes per slow cycle.
+  //
+  // This is the single biggest determinant of what the bot can see at all: an 'unindexed'
+  // coin is not in the market scan, so it CANNOT alert until this sweep finds DexScreener
+  // data for it. With 199,867 unindexed Pons coins and the old budget of 600, a full pass
+  // took ~1.2 days — a coin that started running while queued was invisible until its turn
+  // came, which is exactly how 5x/10x/20x moves were being missed outright.
+  //
+  // 8,000 = ~267 DexScreener requests (30 addresses each) per cycle. The limit is 250/min,
+  // i.e. 1,250 per 5-minute cycle, and the whole cycle currently uses ~87 of them in 34s of
+  // a 300s budget. A full pass now takes ~2 hours instead of ~1.2 days.
+  UNINDEXED_SWEEP_BATCH_SIZE: z.coerce.number().int().positive().default(8_000),
+  DEXSCREENER_CONCURRENCY: z.coerce.number().int().positive().default(4),
+  DEXSCREENER_REQUESTS_PER_MINUTE: z.coerce.number().int().positive().default(250),
+
+  // Fast early-detection loop (separate from the main POLL_INTERVAL_SECONDS cycle):
+  // runs discovery + a bounded-recency ungraduated sweep + a bounded-recency momentum
+  // sweep on a much shorter interval, so brand-new tokens surface within seconds
+  // instead of waiting for the next full cycle.
+  FAST_DISCOVERY_INTERVAL_SECONDS: z.coerce.number().int().positive().default(20),
+  // Recency window bounding both fast sweeps below, so their query/RPC cost stays
+  // constant regardless of how large the total historical token count grows.
+  UNGRADUATED_FAST_WINDOW_HOURS: z.coerce.number().positive().default(6),
+  // Ascending USD tiers of real market cap (resolved via DexScreener when indexed,
+  // else via on-chain pool price — never fabricated) for a token's fast sweep. One
+  // combined alert per newly-crossed tier, never re-fired for an already-crossed tier.
+  // Spans both pre- and post-graduation, since real market cap stays meaningful
+  // across that boundary (unlike the old "ETH raised into curve" figure).
+  // Tiers above the hardcoded $11k entry-alert market-cap cap (see poller.ts's
+  // MAX_ALERT_MARKET_CAP_USD) can never fire, so the ladder stops at 10000. It also no
+  // longer starts at 2000: measured against production, every Pons launch is born at
+  // ~$2,580 market cap, so a $2,000 tier was crossed by 100% of tokens at birth before a
+  // single trade — pure noise that also burned a DexScreener lookup per token per cycle.
+  MARKET_CAP_ALERT_TIERS_USD: z.string().min(1).default("3000,4000,5000,6000,10000"),
+  // Was 60, pairing with a "first hour of a new pair" strategy. That strategy is retired:
+  // nothing under MIN_ALERT_AGE_MINUTES (60) can alert at all now, so a 60-minute ceiling
+  // left this path with an empty window and it could never fire. Widened to a week, the
+  // same burst-of-buying detector applies to established coins instead, which is the
+  // "people suddenly bidding" signal that replaced new-pair hunting.
+  EARLY_MOMENTUM_MAX_AGE_MINUTES: z.coerce.number().positive().default(10_080),
+  EARLY_MOMENTUM_MIN_BUYS_5M: z.coerce.number().int().nonnegative().default(10),
+  EARLY_MOMENTUM_MIN_VOLUME_5M_USD: z.coerce.number().nonnegative().default(1000),
+  // Allows at most one bounded follow-up momentum alert per token: fires again if
+  // buys/volume (5m) have multiplied by at least this much since the original alert.
+  MOMENTUM_REALERT_MULTIPLE: z.coerce.number().positive().default(3),
+  ETH_USD_PRICE_REFRESH_SECONDS: z.coerce.number().int().positive().default(60),
+
+  // Ascending multiples-since-first-alert (current market cap / entry baseline) that trigger
+  // a "how many x's" performance milestone alert. Same guarded, never-re-fire ladder pattern
+  // as MARKET_CAP_ALERT_TIERS_USD, keyed on peak_multiple instead of raw market cap.
+  PERFORMANCE_MILESTONE_MULTIPLES: z.string().min(1).default("2,3,5,10,20,50,100,200,500,1000"),
+
+  PORT: z.coerce.number().int().positive().default(8787),
+  HOST: z.string().min(1).default("0.0.0.0"),
+
+  DB_PATH: z.string().min(1).default("./data/pons-revival.db"),
+  LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),
+  DRY_RUN_ALERTS: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
+});
+
+export type AppConfig = z.infer<typeof ConfigSchema>;
+
+export function loadConfig(): AppConfig {
+  const parsed = ConfigSchema.safeParse(process.env);
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
+    throw new Error(`Invalid configuration: ${issues}`);
+  }
+  return parsed.data;
+}

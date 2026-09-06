@@ -1,6 +1,9 @@
 node_modules/
 dist/
-data/
+# Root-anchored: the runtime SQLite directory only. Unanchored "data/" matches a directory
+# of that name at ANY depth, which silently excluded every src/data/*.ts source file — the
+# repo's entire data layer was missing from git and main could not build.
+/data/
 .env
 *.db
 *.db-journal

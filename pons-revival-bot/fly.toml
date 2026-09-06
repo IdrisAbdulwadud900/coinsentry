@@ -1,0 +1,148 @@
+# Fly.io app configuration for the Pons Revival Signal Bot.
+# Replace `app` below with the unique name you choose during `fly launch`.
+app = "pons-revival-bot"
+primary_region = "iad"
+
+[build]
+
+[env]
+  PORT = "8787"
+  HOST = "0.0.0.0"
+  DB_PATH = "/data/pons-revival.db"
+  # warn, not info. At info this bot logs several lines per token, and Node's stdout to a
+  # pipe is asynchronous: when the log consumer cannot drain it, the undelivered writes
+  # queue in the process heap. That matched the failure exactly — the process died after
+  # ~400 tokens every time regardless of batch size (8000, 1500 and 400 all reached the
+  # same point), which is per-token retention, not per-batch. Alerts, gate blocks and
+  # errors are all warn or above, so nothing operationally useful is lost.
+  LOG_LEVEL = "info"
+  DRY_RUN_ALERTS = "false"
+  # 900 was sized for 458k tokens per cycle. Pons-only tracks ~24k with a hot-set that
+  # fits in one batch, so 300 triples how often a surging coin is re-read.
+  POLL_INTERVAL_SECONDS = "300"
+  # Back on: this is what catches a brand-new Pons pair within ~20s of launch — the
+  # measured 86%-win bucket is alerts under 5 minutes old, which a 5-minute slow cycle
+  # cannot deliver alone. It was disabled while new pairs were out of scope and while its
+  # unindexed sweep could load 400k rows in one read; that read is now capped at 600.
+  FAST_POLLING_ENABLED = "true"
+
+  FAST_DISCOVERY_INTERVAL_SECONDS = "20"
+  UNGRADUATED_FAST_WINDOW_HOURS = "6"
+  # Rungs end just under the universal $20k ceiling: a coin crossing 15k is close to
+  # leaving alertable range, which is itself worth knowing.
+  MARKET_CAP_ALERT_TIERS_USD = "3000,4000,5000,6000,10000,15000"
+  # Deliver only the highest-conviction profile: Robinhood coins alerted within 5 minutes
+  # of launch, measured at 86% win / 3% dump for tier alerts and 73% for momentum, vs
+  # 31-44% for everything older. Set to "low" to restore full coverage.
+  # "high" is unreachable under the >=60-minute rule: rateConviction only awards it to a
+  # brand-new pair or to a breakout, so a high floor silently discarded every momentum
+  # alert on an established coin — 129 were blocked as "medium conviction" in two hours,
+  # which is exactly the sudden-bid signal this bot now exists to send. "medium" lets that
+  # signal through while still dropping the low-confidence bucket.
+  MIN_ALERT_CONVICTION = "medium"
+  # Breakout: catches a coin surging against its own baseline at any age — the 2k->high
+  # move that happens hours or days after launch, which every launch-anchored path misses.
+  # Loosened against measured supply, not by feel: of 1,808 coins scanned in an hour only
+  # 64 had a single buy, and just 9-10 cleared the old floors — before the 5x surge test
+  # was even applied. At that rate the signal fires a few times a day at best and misses
+  # the smaller surges the strategy is meant to catch.
+  BREAKOUT_VOLUME_MULTIPLE = "3"
+  BREAKOUT_MIN_VOLUME_1H_USD = "1500"
+  BREAKOUT_MIN_BUYS_1H = "15"
+  BREAKOUT_COOLDOWN_HOURS = "12"
+  EARLY_MOMENTUM_MAX_AGE_MINUTES = "10080"
+  EARLY_MOMENTUM_MIN_BUYS_5M = "10"
+  EARLY_MOMENTUM_MIN_VOLUME_5M_USD = "1000"
+  MOMENTUM_REALERT_MULTIPLE = "3"
+  ETH_USD_PRICE_REFRESH_SECONDS = "60"
+  PERFORMANCE_MILESTONE_MULTIPLES = "2,3,5,10,20,50,100,200,500,1000"
+
+  GRADUATION_CHECK_BATCH_SIZE = "300"
+  # 50000 loaded 50k full token rows per cycle and blew the heap; 20000 still left the
+  # process being OOM-killed by the kernel. 8000 is what actually fits alongside everything
+  # else this cycle holds. The trade is coverage: the 389k-token table is revisited more
+  # slowly, which is strictly better than a bot that restarts before it can alert.
+  # Sized empirically, not aspirationally. The per-token loop retains memory that six
+  # separate investigations failed to attribute (it is not the batch data, the launch
+  # scanner, the log transport, the fast poller, or uncached SQL statements), and the
+  # process dies partway through a cycle at 8000 (~4 min) and at 1500 (~9 min). 400 keeps a
+  # cycle comfortably inside the limit so the bot actually runs and alerts while the
+  # remaining leak is chased down.
+  # Sized to the measured crash threshold, not to ambition. Prioritising coins that are
+  # actually trading (see listTrackableForCycle) re-exposed the per-token leak: previously
+  # most of a batch was idle coins that the activity filter skipped, and now nearly every
+  # scanned coin runs the full handler chain, which dies after roughly 400 of them. 350
+  # stays under that. Because the hot set sorts first and rotates oldest-checked within
+  # itself, the ~1,300 genuinely active coins are each revisited about hourly — against
+  # roughly every 40 hours before this ordering existed.
+  # Raised with the cycle running at 34s of its 300s budget and DexScreener usage at ~87
+  # of the 1,250 requests a 5-minute cycle allows. Covers the ~24k scannable Pons coins in
+  # roughly four cycles instead of twelve.
+  MARKET_SCAN_BATCH_SIZE = "6000"
+  # The gate on what the bot can see at all: an unindexed coin cannot alert until this
+  # sweep finds market data for it. 199,867 Pons coins sit unindexed, so at the old 600 a
+  # full pass took ~1.2 days and a coin that started running while queued was invisible
+  # until its turn came. At 8,000 a full pass takes ~2 hours.
+  UNINDEXED_SWEEP_BATCH_SIZE = "8000"
+
+  DEAD_MIN_AGE_HOURS = "24"
+  DEAD_VOLUME_24H_USD = "500"
+  DEAD_MIN_BUYS_1H = "3"
+  DEAD_CONFIRM_POLLS = "6"
+
+  REVIVAL_VOLUME_MULTIPLE = "8"
+  REVIVAL_MIN_VOLUME_1H_USD = "300"
+  REVIVAL_MIN_BUYS_1H = "5"
+  REVIVAL_LIQUIDITY_FLOOR_PCT = "0.8"
+  REVIVAL_CONFIRM_POLLS = "2"
+  ALERT_COOLDOWN_HOURS = "6"
+  DEMOTE_CONFIRM_POLLS = "3"
+
+  SNAPSHOT_RETENTION_DAYS = "7"
+
+  ROBINHOOD_CHAIN_ID_DEXSCREENER = "robinhood"
+  # Pons launchpad only, on Robinhood. Other chains and the direct DEX-pool scans are off:
+  # they pulled in the whole chain (458,000 tokens against ~20,000 launchpad coins) and the
+  # scan budget was spread across all of it.
+  # solana is back: StonkFun launches are Solana mints, and every stage after discovery
+  # (DexScreener market data, the Jupiter mint/freeze audit, the alert gates) already
+  # supports them.
+  ENABLED_CHAINS = "robinhood,solana"
+  # Direct DEX-pool scanning off: it is what pulled the whole chain in. Only the two Pons
+  # launchpad factories (v1 and v2) are discovered and scanned now.
+  DEX_POOL_DISCOVERY_ENABLED = "false"
+  PONS_LAUNCHPAD_ONLY = "true"
+  # Allowlist of every launchpad in scope; anything else is neither scanned nor alerted.
+  PONS_FACTORY_FILTER = "0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e,0xdab26bb66f29863f2d68ced54f65cc614c4e65dc,0xA5aAb3F0c6EeadF30Ef1D3Eb997108E976351feB,0x0c37a24F5D23A486FA692d1500881d698B1F77a4,stonkfun,raydium-launchlab"
+  ROBINHOOD_RPC_URL = "https://rpc.mainnet.chain.robinhood.com"
+  PONS_FACTORY_ACTIVE = "0xA5aAb3F0c6EeadF30Ef1D3Eb997108E976351feB"
+  PONS_FACTORY_ACTIVE_START_BLOCK = "8991118"
+  PONS_FACTORY_LEGACY = "0x0c37a24F5D23A486FA692d1500881d698B1F77a4"
+  PONS_FACTORY_LEGACY_START_BLOCK = "8600612"
+  # 25,000 for the live launchpad: at ~126 launches per 3,000 blocks a 500,000-block chunk
+  # blew past the RPC's 10,000-log ceiling and stalled the scan on the same range forever.
+  DISCOVERY_CHUNK_BLOCKS = "25000"
+
+# TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are secrets, NOT set here.
+# Set them yourself with: fly secrets set TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...
+
+[mounts]
+  source = "pons_revival_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[http_service.checks]]
+  type = "tcp"
+  interval = "15s"
+  timeout = "5s"
+  grace_period = "10s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1024mb"
