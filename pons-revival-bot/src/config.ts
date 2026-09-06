@@ -60,7 +60,29 @@ const ConfigSchema = z.object({
   BSC_BLOCKSCOUT_URL: z.string().url().optional().or(z.literal("")).default(""),
   // Solana JSON-RPC, used only for SPL mint/freeze authority safety checks at alert time.
   // The default public endpoint serves these light calls without a key.
-  SOLANA_RPC_URL: z.string().url().default("https://api.mainnet-beta.solana.com"),
+  // Not .url(): a malformed value here used to abort startup outright, and the bot
+  // crash-looped until the secret was removed. A mistyped optional endpoint — a URL split
+  // across two lines when pasted, say — must never be able to take the whole bot down, so
+  // an unusable value falls back to the public endpoint with a warning instead. Every other
+  // feature keeps working; only Solana safety checks are affected.
+  SOLANA_RPC_URL: z
+    .string()
+    .default("https://api.mainnet-beta.solana.com")
+    .transform((raw) => {
+      const cleaned = raw.trim().replace(/\s+/g, "");
+      try {
+        const parsed = new URL(cleaned);
+        if (parsed.protocol === "http:" || parsed.protocol === "https:") return cleaned;
+      } catch {
+        // fall through to the default below
+      }
+      // eslint-disable-next-line no-console -- the logger does not exist yet at config load.
+      console.warn(
+        `SOLANA_RPC_URL is not a usable URL; falling back to the public endpoint. ` +
+          `Solana safety checks will be rate-limited until it is corrected.`
+      );
+      return "https://api.mainnet-beta.solana.com";
+    }),
   // A Solana deployer with more lifetime mints than this is a spam farm (Jupiter reports
   // the count per token; values in the hundreds are routine for mass minters).
   SOLANA_SPAM_DEV_MINTS: z.coerce.number().int().positive().default(50),
