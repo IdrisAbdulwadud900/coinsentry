@@ -1236,7 +1236,10 @@ describe("drained-pool market caps (BINGBONG case)", () => {
       liquidity: { usd: liquidityUsd },
       marketCap,
       volume: { m5: 5000, h1: 23_964 },
-      txns: { m5: { buys: 20 }, h1: { buys: 28, sells: 1 } },
+      // 28 buys with 1 sell is a honeypot-shaped profile and is now blocked as one. These
+      // tests are about whether a market cap is backed by liquidity, so the fixture trades
+      // normally and does not accidentally trip an unrelated gate.
+      txns: { m5: { buys: 20 }, h1: { buys: 28, sells: 12 } },
       info: { websites: [{ url: "https://bing.example" }], socials: [{ url: "https://x.com/b", type: "twitter" }] },
     };
   }
@@ -2245,6 +2248,18 @@ describe("honeypot detection", () => {
     expect(await attempt(60, 1)).not.toHaveBeenCalled();
   });
 
+  it("blocks a low-activity coin with zero sells, which used to slip through entirely", async () => {
+    // The gap that let traps through: the alert floor was 5 buys but honeypot testing only
+    // began at 15, so 5-14 buys with not one sell was never checked at all.
+    expect(await attempt(8, 0)).not.toHaveBeenCalled();
+    expect(await attempt(14, 0)).not.toHaveBeenCalled();
+  });
+
+  it("blocks a coin whose sells are a token gesture against heavy buying", async () => {
+    // 25 buys, 2 sells = 8%, under the 10% floor. Healthy coins measured live ran 30-100%.
+    expect(await attempt(25, 2)).not.toHaveBeenCalled();
+  });
+
   it("still blocks the outright zero-sells case", async () => {
     expect(await attempt(20, 0)).not.toHaveBeenCalled();
   });
@@ -2258,5 +2273,71 @@ describe("honeypot detection", () => {
     // Null sells means DexScreener did not report, not that nobody sold.
     const sent = await attempt(60, null);
     expect(sent).toHaveBeenCalled();
+  });
+});
+
+describe("rug detection (liquidity being pulled)", () => {
+  let db: Db;
+  beforeEach(() => {
+    db = openDatabase(":memory:");
+  });
+
+  // A rug is not a honeypot: selling works right up until the pool is emptied, so every
+  // sell-based check passes and says nothing. The pool shrinking is what gives it away.
+  function seed(tokenRepo: TokenRepo, snapshotRepo: SnapshotRepo, now: number, liquidities: number[]) {
+    tokenRepo.insertIfNew("0xAAA", "RUG", "Rug", "0xpairAAA", "active", null, "0xFactory1", ALERTABLE_AGE(now));
+    liquidities.forEach((liq, i) => {
+      snapshotRepo.insert(
+        {
+          tokenAddress: "0xAAA", symbol: "RUG", name: "Rug", priceUsd: 0.001, marketCapUsd: 8000,
+          liquidityUsd: liq, volume5m: 500, volume1h: 4000, volume24h: 20000, buys5m: 10,
+          buys1h: 40, sells1h: 20, imageUrl: null, websiteUrl: "https://r.example", socials: [],
+          dexUrl: "", pairCreatedAt: null,
+        },
+        now - (liquidities.length - i) * 300_000
+      );
+    });
+  }
+
+  async function run(liquidities: number[], currentLiquidity: number) {
+    const now = Date.now();
+    const sendAlert = vi.fn(async () => {});
+    const pair = {
+      chainId: "robinhood", dexId: "test", pairAddress: "0xpairAAA",
+      baseToken: { address: "0xAAA", symbol: "RUG", name: "Rug" },
+      liquidity: { usd: currentLiquidity }, volume: { m5: 5000 }, marketCap: 8000,
+      txns: { m5: { buys: 20 }, h1: { buys: 40, sells: 20 } },
+      info: { websites: [{ url: "https://r.example" }] },
+    };
+    const { deps, tokenRepo } = baseDeps(db, {
+      dex: { lookupBatch: vi.fn(async () => [pair]) } as unknown as DexScreenerClient,
+      notifier: { sendAlert } as unknown as Notifier,
+      dryRunAlerts: false,
+    });
+    seed(tokenRepo, deps.snapshotRepo, now, liquidities);
+    await runMomentumFastSweep(deps, now);
+    return sendAlert;
+  }
+
+  it("blocks a coin whose pool is being emptied, even though selling still works", async () => {
+    // Pool peaked at $40k and is down to $9k — 22% remaining. Buys and sells both healthy.
+    expect(await run([40_000, 38_000, 30_000], 9_000)).not.toHaveBeenCalled();
+  });
+
+  it("allows a small coin whose liquidity has simply always been small", async () => {
+    // $4k throughout is a small coin, not a drain — judged against its own history, not an
+    // absolute floor.
+    expect(await run([4_000, 4_100, 3_950], 4_000)).toHaveBeenCalled();
+  });
+
+  it("allows normal pool movement rather than treating any dip as a rug", async () => {
+    // Down ~12% from peak; pools breathe with trading.
+    expect(await run([10_000, 9_500, 9_200], 8_800)).toHaveBeenCalled();
+  });
+
+  it("stays silent when there is too little history to know the peak", async () => {
+    // One prior sample proves nothing, and blocking every newly-seen coin would silence the
+    // launches this bot exists to catch.
+    expect(await run([40_000], 9_000)).toHaveBeenCalled();
   });
 });

@@ -114,22 +114,44 @@ export function effectiveBundleCapPct(settingsRepo: SettingsRepo): number {
 
 /** Minimum 1h buy count before a zero-sell hour is treated as a honeypot signal — below
  * this, zero sells is just a quiet token, not evidence nobody *can* sell. */
-const HONEYPOT_MIN_BUYS_1H = 15;
+/** Universal tradability floors: every alert needs real liquidity and real buyers, links
+ * or not. Declared above the honeypot thresholds because those are derived from them. */
+const MIN_ALERT_LIQUIDITY_USD = 1_000;
+const MIN_ALERT_BUYS_1H = 5;
+
+/** Snapshots needed before the liquidity-drain check will judge a coin. Below this there is
+ * no meaningful peak to compare against, and silence beats a guess. */
+const LIQUIDITY_DRAIN_MIN_SAMPLES = 3;
+
+/** Share of its own recent peak liquidity a coin must still hold. Normal pools breathe with
+ * trading; losing more than a third of the pool is withdrawal, not noise. */
+const LIQUIDITY_DRAIN_MIN_REMAINING = 0.65;
+
+/**
+ * Buys needed before zero sells counts as a honeypot signal.
+ *
+ * Was 15 while MIN_ALERT_BUYS_1H was 5, which left a window a trap could drive through:
+ * a coin with 5-14 buys and not one sell cleared the activity floor and was never
+ * honeypot-tested at all. Tying this to the alert floor closes it — if a coin has enough
+ * buyers to be worth alerting, it has enough to expect at least one of them to have got
+ * out, and none getting out is the whole definition of the trap.
+ */
+const HONEYPOT_MIN_BUYS_1H = MIN_ALERT_BUYS_1H;
 
 /** Buys needed before the sell-ratio test applies. Higher than the zero-sells threshold
- * because a ratio needs a meaningful denominator: 3 buys and 0 sells is noise, 40 buys and
+ * because a ratio needs a meaningful denominator: 3 buys and 0 sells is noise, 20 buys and
  * 1 sell is a pattern. */
-const HONEYPOT_RATIO_MIN_BUYS_1H = 40;
+const HONEYPOT_RATIO_MIN_BUYS_1H = 20;
 
 /** Minimum share of buys that sells must represent. Real coins, even strongly bought ones,
- * see people take profit — a 5% floor flags the case where almost nobody can. */
-const HONEYPOT_MIN_SELL_SHARE = 0.05;
+ * see people take profit: measured across live alerts, healthy coins run 30-100% (ape
+ * 194/647, MCD 212/684, SHIB 157/103). A 10% floor sits far below any of those while still
+ * catching the case where almost nobody can get out. */
+const HONEYPOT_MIN_SELL_SHARE = 0.1;
 
 /** Universal tradability floor for every entry alert, links or not. Measured against 192
  * resolved alerts, 186 already cleared it — so it costs virtually no coverage while
  * blocking coins that are not realistically enterable or exitable. */
-const MIN_ALERT_LIQUIDITY_USD = 1_000;
-const MIN_ALERT_BUYS_1H = 5;
 
 /**
  * Coins younger than this are never alerted on. The owner's strategy is explicitly not new
@@ -278,6 +300,48 @@ function isMarketCapTrustworthy(marketCapUsd: number | null, liquidityUsd: numbe
 const MAX_PLAUSIBLE_MARKET_CAP_USD = 100_000_000;
 
 /** Gate reason when a market cap isn't backed by real liquidity, or null when it is. */
+/**
+ * Blocks a coin whose liquidity is being withdrawn — the rug, as distinct from the honeypot.
+ *
+ * These are different attacks and only one of them is about selling. In a rug you CAN sell,
+ * right up until the moment the pool is emptied, so every sell-based check passes cleanly
+ * and says nothing. What gives it away is the pool itself shrinking: liquidity that is
+ * materially below its own recent peak means someone is taking it out, and a coin being
+ * drained is never worth entering however good its buying looks.
+ *
+ * Compared against the coin's own recent history rather than an absolute floor, because
+ * "$4,000 of liquidity" means nothing on its own — $4,000 down from $40,000 is a rug in
+ * progress, while $4,000 that has been steady all along is simply a small coin.
+ *
+ * Needs real history to judge: with too few samples this stays silent rather than guessing,
+ * since blocking every coin the bot has only just met would silence the launches it exists
+ * to catch.
+ */
+function liquidityDrainingBlockReason(
+  deps: PollerDeps,
+  token: TokenRow,
+  current: Pick<MarketSnapshot, "liquidityUsd"> | null | undefined
+): string | null {
+  // No snapshot means no reading to judge; other gates already refuse an alert without one.
+  const liquidityNow = current?.liquidityUsd;
+  if (liquidityNow == null || liquidityNow <= 0) return null;
+
+  const history = deps.snapshotRepo.recentSince(token.address, 0, BASELINE_SAMPLE_LIMIT);
+  if (history.length < LIQUIDITY_DRAIN_MIN_SAMPLES) return null;
+
+  const peak = Math.max(...history.map((h) => h.liquidity_usd ?? 0));
+  if (peak <= 0) return null;
+
+  const remaining = liquidityNow / peak;
+  if (remaining < LIQUIDITY_DRAIN_MIN_REMAINING) {
+    return (
+      `liquidity draining: $${Math.round(liquidityNow)} is ${Math.round(remaining * 100)}% of its ` +
+      `recent peak $${Math.round(peak)}`
+    );
+  }
+  return null;
+}
+
 function untrustworthyMarketCapReason(
   deps: PollerDeps,
   marketCapUsd: number | null,
@@ -904,7 +968,8 @@ async function checkAndSendMarketCapTierAlert(
     if (token.last_block_at != null && now - token.last_block_at < GATE_RECHECK_INTERVAL_MS) return;
     snapshot = await fetchSnapshotForToken(deps, token);
   }
-  const blockReason = alreadyPingedBlockReason(deps, token) ?? entryAlertBlockReason(marketCapUsd, snapshot, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
+  const blockReason = alreadyPingedBlockReason(deps, token) ??
+    liquidityDrainingBlockReason(deps, token, snapshot) ?? entryAlertBlockReason(marketCapUsd, snapshot, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
   if (blockReason) {
     // Transient conditions (market cap not resolved yet, links not indexed yet, a
     // zero-sell hour) — deliberately do NOT consume the tier index or capture an entry
@@ -1267,7 +1332,8 @@ async function handleDeadToken(deps: PollerDeps, token: TokenRow, current: Retur
   // stamp: `last_alert_at` also drives isInCooldown, so stamping it on every blocked cycle
   // held the token in a rolling 6h cooldown that outlived the block itself and silently
   // suppressed the alert long after the coin qualified again.
-  const gateReason = alreadyPingedBlockReason(deps, token) ?? entryAlertBlockReason(resolveMarketCapUsd(current), current, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
+  const gateReason = alreadyPingedBlockReason(deps, token) ??
+    liquidityDrainingBlockReason(deps, token, current) ?? entryAlertBlockReason(resolveMarketCapUsd(current), current, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
   if (gateReason) {
     recordGateBlock(deps, token, "revival", gateReason);
     tokenRepo.setRevivalConfirmCount(token.address, next);
@@ -1406,7 +1472,8 @@ async function handleBreakoutCandidate(
 
   const gateReason =
     untrustworthyMarketCapReason(deps, resolveMarketCapUsd(current), current.liquidityUsd) ??
-    alreadyPingedBlockReason(deps, token) ?? entryAlertBlockReason(
+    alreadyPingedBlockReason(deps, token) ??
+    liquidityDrainingBlockReason(deps, token, current) ?? entryAlertBlockReason(
       resolveMarketCapUsd(current),
       current,
       alertAgeMinutes(token, now)
@@ -1662,7 +1729,8 @@ export async function runGraduationSweep(deps: PollerDeps, now: number): Promise
     if (isMarketCapTrustworthy(marketCapUsd, snap?.liquidityUsd ?? null, deps.minLiquidityToMcapPct)) {
       tokenRepo.updateAthMarketCap(token.address, marketCapUsd!);
     }
-    const blockReason = alreadyPingedBlockReason(deps, token) ?? entryAlertBlockReason(marketCapUsd, snap, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
+    const blockReason = alreadyPingedBlockReason(deps, token) ??
+    liquidityDrainingBlockReason(deps, token, snap) ?? entryAlertBlockReason(marketCapUsd, snap, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
     if (blockReason) {
       recordGateBlock(deps, token, "graduation", blockReason);
       continue;
@@ -1816,7 +1884,8 @@ export async function runUngraduatedFastSweep(deps: PollerDeps, now: number): Pr
       // silently and permanently dropped for the majority of tokens.
       const snap = await fetchSnapshotForToken(deps, token);
       const resolvedMcap = resolveMarketCapUsd(snap, onChainMcap);
-      const blockReason = alreadyPingedBlockReason(deps, token) ?? entryAlertBlockReason(resolvedMcap, snap, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
+      const blockReason = alreadyPingedBlockReason(deps, token) ??
+    liquidityDrainingBlockReason(deps, token, snap) ?? entryAlertBlockReason(resolvedMcap, snap, alertAgeMinutes(token, now)) ?? (await convictionBlockReason(deps, token, now));
       if (blockReason) {
         recordGateBlock(deps, token, "graduation", blockReason);
         continue;
@@ -2015,7 +2084,8 @@ export async function runMomentumFastSweep(deps: PollerDeps, now: number): Promi
     // Momentum now describes an established coin being suddenly bid, not a new pair in its
     // first hour, so it takes the established ceiling rather than the launch cap.
     const gateReason =
-      alreadyPingedBlockReason(deps, token) ?? entryAlertBlockReason(
+      alreadyPingedBlockReason(deps, token) ??
+    liquidityDrainingBlockReason(deps, token, current) ?? entryAlertBlockReason(
         current.marketCapUsd,
         current,
         alertAgeMinutes(token, now)
