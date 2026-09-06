@@ -906,6 +906,8 @@ export interface PollerDeps {
   resolvedPoolCache: Set<string>;
   /** StonkFun launch ledger reader; absent means that launchpad is not tracked. */
   stonkfunClient?: StonkfunClient;
+  /** Solana launchpads to track, as Jupiter names them. */
+  solanaTrackedLaunchpads: string[];
   /** Per-chain pool-factory scanning setup (Robinhood, plus BSC/Ethereum when configured). */
   poolChainConfigs: ChainPoolConfig[];
   /** Blockscout-compatible holder/metadata APIs, keyed by chain. Robinhood and Ethereum
@@ -2408,6 +2410,7 @@ export async function runFastCycle(deps: PollerDeps): Promise<void> {
   if (activeChains(deps).includes("solana")) {
     try {
       await runSolanaDiscovery({
+        trackedLaunchpads: deps.solanaTrackedLaunchpads,
         tokenRepo,
         jupiter: deps.jupiterClient,
         minLiquidityUsd: deps.discoveryMinLiquidityUsd,

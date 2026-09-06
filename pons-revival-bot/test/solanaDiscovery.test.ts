@@ -93,3 +93,61 @@ describe("runSolanaDiscovery", () => {
     expect(await runSolanaDiscovery(deps([]))).toBe(0);
   });
 });
+
+describe("launchpad attribution", () => {
+  // Passing null for factory_address meant every Solana coin discovered was then excluded
+  // by the launchpad-only scan filter — discovery ran and nothing ever came of it.
+  function jupToken(over: Record<string, unknown> = {}) {
+    return {
+      address: "So11111111111111111111111111111111111111112",
+      symbol: "TKN",
+      name: "Token",
+      dev: "Dev111",
+      launchpad: "raydium-launchlab",
+      liquidityUsd: 5000,
+      devMints: 1,
+      firstPoolCreatedAt: Date.now(),
+      ...over,
+    };
+  }
+
+  it("records the launchpad so the coin survives the launchpad-only scan filter", async () => {
+    const db = openDatabase(":memory:");
+    const tokenRepo = new TokenRepo(db);
+    await runSolanaDiscovery({
+      tokenRepo,
+      jupiter: { fetchRecentTokens: async () => [jupToken()] } as never,
+      minLiquidityUsd: 200,
+      spamDevMintsThreshold: 50,
+      logger,
+    });
+
+    const row = tokenRepo.findByAddress("So11111111111111111111111111111111111111112");
+    expect(row?.factory_address).toBe("raydium-launchlab");
+    expect(row?.chain).toBe("solana");
+  });
+
+  it("tracks only the launchpads asked for", async () => {
+    const db = openDatabase(":memory:");
+    const tokenRepo = new TokenRepo(db);
+    await runSolanaDiscovery({
+      tokenRepo,
+      jupiter: {
+        fetchRecentTokens: async () => [
+          jupToken({ address: "Keep1", launchpad: "raydium-launchlab" }),
+          jupToken({ address: "Drop1", launchpad: "some-other-pad" }),
+          // Unknown provenance cannot be attributed to a launchpad the owner asked for.
+          jupToken({ address: "Drop2", launchpad: null }),
+        ],
+      } as never,
+      minLiquidityUsd: 200,
+      spamDevMintsThreshold: 50,
+      trackedLaunchpads: ["raydium-launchlab"],
+      logger,
+    });
+
+    expect(tokenRepo.findByAddress("Keep1")).toBeDefined();
+    expect(tokenRepo.findByAddress("Drop1")).toBeUndefined();
+    expect(tokenRepo.findByAddress("Drop2")).toBeUndefined();
+  });
+});

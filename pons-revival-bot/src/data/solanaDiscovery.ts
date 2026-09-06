@@ -3,6 +3,11 @@ import type { TokenRepo } from "./tokenRepo.js";
 import type { JupiterClient } from "./jupiterClient.js";
 
 export interface SolanaDiscoveryDeps {
+  /** Launchpad names to track, as Jupiter reports them. Empty means every known launchpad.
+   * LetsBonk coins report as "raydium-launchlab", which it shares with other LaunchLab
+   * platforms — Jupiter does not distinguish them further, so tracking LetsBonk means
+   * tracking LaunchLab. */
+  trackedLaunchpads?: string[];
   tokenRepo: TokenRepo;
   jupiter: JupiterClient;
   /** Liquidity floor for tracking a token as 'active' rather than 'unindexed'. */
@@ -27,6 +32,7 @@ export interface SolanaDiscoveryDeps {
  */
 export async function runSolanaDiscovery(deps: SolanaDiscoveryDeps): Promise<number> {
   const { tokenRepo, jupiter, minLiquidityUsd, spamDevMintsThreshold, logger } = deps;
+  const trackedLaunchpads = deps.trackedLaunchpads ?? [];
 
   const recent = await jupiter.fetchRecentTokens();
   if (recent.length === 0) return 0;
@@ -37,6 +43,10 @@ export async function runSolanaDiscovery(deps: SolanaDiscoveryDeps): Promise<num
 
   for (const token of recent) {
     if (tokenRepo.findByAddress(token.address) !== undefined) continue;
+    // A coin with no known launchpad has unknown provenance and cannot be attributed to a
+    // launchpad the owner asked for, so it is skipped rather than tracked as chain noise.
+    if (!token.launchpad) continue;
+    if (trackedLaunchpads.length > 0 && !trackedLaunchpads.includes(token.launchpad)) continue;
 
     const isSpamDev = token.devMints != null && token.devMints > spamDevMintsThreshold;
     if (isSpamDev) spamSkipped += 1;
@@ -51,7 +61,14 @@ export async function runSolanaDiscovery(deps: SolanaDiscoveryDeps): Promise<num
       "", // pair address is resolved later from DexScreener, once it indexes the pool
       status,
       token.dev,
-      null, // no Pons factory — graduation/bonding-curve tracking correctly skips these
+      // The launchpad that minted it, e.g. "raydium-launchlab" (which is what LetsBonk
+      // coins report) or "pump.fun". Stored where a Pons factory address would go for two
+      // reasons: it identifies the origin, and the launchpad-only scan filter keys on this
+      // column — passing null here meant every Solana coin discovered was then excluded
+      // from scanning entirely, so discovery ran and nothing ever came of it. Graduation
+      // and bonding-curve tracking still skip these, since those are Pons-specific and key
+      // off the Pons factory addresses.
+      token.launchpad,
       token.firstPoolCreatedAt ?? now,
       null,
       null,

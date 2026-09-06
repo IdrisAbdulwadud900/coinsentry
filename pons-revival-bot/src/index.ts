@@ -188,6 +188,9 @@ async function main(): Promise<void> {
     jupiterClient,
     xSearchClient,
     stonkfunClient,
+    solanaTrackedLaunchpads: config.SOLANA_TRACKED_LAUNCHPADS.split(",")
+      .map((l) => l.trim())
+      .filter(Boolean),
     solanaSpamDevMints: config.SOLANA_SPAM_DEV_MINTS,
     minAlertConviction: config.MIN_ALERT_CONVICTION,
     breakoutVolumeMultiple: config.BREAKOUT_VOLUME_MULTIPLE,

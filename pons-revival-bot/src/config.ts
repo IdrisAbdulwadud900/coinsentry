@@ -113,6 +113,16 @@ const ConfigSchema = z.object({
   // Ledger pages read on each pass. 1 covers live launches; more is only useful on a cold
   // start, where deeper pages backfill recent history (345 pages hold all 8,601 launches).
   STONKFUN_PAGES_PER_CYCLE: z.coerce.number().int().positive().default(1),
+  // Solana launchpads to track, as Jupiter names them, comma-separated. Empty tracks every
+  // launchpad Jupiter knows.
+  //
+  // LetsBonk (letsbonk.fun) is built on Raydium LaunchLab and its coins report as
+  // "raydium-launchlab" — Jupiter does not distinguish LaunchLab platforms from one
+  // another, so tracking LetsBonk necessarily means tracking LaunchLab as a whole. The
+  // alternative, matching LetsBonk's platform-config account
+  // (FfYek5vEz23cMkWsdJwG2oa6EphsvXSHrGpdALN4g6W1) per coin, needs a paid streaming feed
+  // and would cost far more than it filters out.
+  SOLANA_TRACKED_LAUNCHPADS: z.string().default("raydium-launchlab,pump.fun"),
   DISCOVERY_CHUNK_BLOCKS: z.coerce.number().int().positive().default(500_000),
   // Launches one discovery pass may hold before deferring the rest to the next cycle. The
   // scan used to run unbounded to the chain head, which is fine while the bot is keeping up
